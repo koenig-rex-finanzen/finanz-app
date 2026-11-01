@@ -36,8 +36,8 @@ function zeigeAnmelden(fehler) {
   </main>`;
 }
 
-async function laden() {
-  root.innerHTML = '<main class="pc-start"><p class="hint">Lade die Datei aus OneDrive …</p></main>';
+async function laden(versuch = 1) {
+  if (!z.modell) root.innerHTML = '<main class="pc-start"><p class="hint">Lade die Datei aus OneDrive …</p></main>';
   try {
     const g = await od.dateiFinden();
     if (!g) return zeigeAnmelden('Die Datei wurde in OneDrive nicht gefunden.');
@@ -47,7 +47,8 @@ async function laden() {
     zeichne();
   } catch (e) {
     if (e instanceof od.AnmeldungNoetig) return zeigeAnmelden('Die Anmeldung ist abgelaufen.');
-    zeigeAnmelden('Fehler beim Laden: ' + e.message);
+    if (versuch < 3) { await new Promise((r) => setTimeout(r, 1500 * versuch)); return laden(versuch + 1); }
+    zeigeAnmelden('Fehler beim Laden: ' + e.message + '. Bitte die Seite neu laden.');
   }
 }
 
