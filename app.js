@@ -3,8 +3,9 @@ import { leseBuchhaltung } from './kern/lesen.js';
 import { monatsansicht, monate, monatsname, monatPlus, eur } from './kern/rechnen.js';
 import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
+import { verstehen } from './kern/verstehen.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -373,6 +374,7 @@ function zeigeMenu() {
 
 
 // ---------- Eintragen
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 const kannEintragen = () => ms.aktiv() && ms.angemeldet() && z.datei?.quelle === 'onedrive' && !!od.aktuellerOrt();
 const STANDARD = {
   Ausgabe: (k) => ({ von: k.gem, nach: k.extern }),
@@ -402,6 +404,12 @@ function zeigeEintragen(fehler, vorher) {
   const opt = (liste, wert, leer) => (leer ? `<option value="">${leer}</option>` : '') + liste.map((x) => `<option value="${h(x)}" ${x === wert ? 'selected' : ''}>${h(x)}</option>`).join('');
   menu.innerHTML = `<form id="eintragen-form" novalidate>
     <h2 id="menu-titel">Buchung eintragen</h2>
+    <div class="sprechen">
+      ${SR ? `<button type="button" class="mikro" id="mikro" aria-label="Sprechen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>` : ''}
+      <input name="satz" id="satz" autocomplete="off" enterkeyhint="done" placeholder="${SR ? 'Sprechen oder schreiben, z. B. „12,50 Bäckerei mit der Visa“' : 'Schreiben oder per Tastatur-Mikrofon diktieren'}">
+      <button type="button" class="knopf leise klein" id="satz-los">Übernehmen</button>
+    </div>
+    <p class="erkannt" id="erkannt" aria-live="polite"></p>
     <div class="seg" role="radiogroup" aria-label="Art">${['Ausgabe', 'Einnahme', 'Umbuchung'].map((a) =>
       `<label><input type="radio" name="art" value="${a}" ${v.art === a ? 'checked' : ''}><span>${a}</span></label>`).join('')}</div>
     <label class="feld"><span>Betrag in €</span><input name="betrag" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${h(v.betrag)}" required></label>
@@ -437,6 +445,54 @@ function zeigeEintragen(fehler, vorher) {
     if (ev.target.name === 'datum' && ev.target.value) { const mo = ev.target.value.slice(0, 7); if ([...form.giltFuer.options].some((o) => o.value === mo)) form.giltFuer.value = mo; zusammen(); }
   });
   zusammen();
+
+  // Satz verstehen und Formular vorausfüllen
+  const satzFeld = document.getElementById('satz');
+  const hinweis = document.getElementById('erkannt');
+  const uebernehmen = () => {
+    const satz = satzFeld.value.trim();
+    if (!satz) return;
+    const { felder: f, erkannt, fehlt } = verstehen(satz, z.modell, heute());
+    const setze = (name, wert) => {
+      const el = form.elements[name];
+      if (wert == null || wert === '' || !el) return;
+      if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === wert)) {
+        if (name !== 'giltFuer') return;
+        el.add(new Option(monatsname(wert, true), wert));
+      }
+      el.value = wert;
+      const feld = el.closest('.feld'); if (feld) { feld.classList.remove('neu'); void feld.offsetWidth; feld.classList.add('neu'); }
+    };
+    if (f.art) form.querySelector(`input[name=art][value="${f.art}"]`).checked = true;
+    ['betrag', 'posten', 'datum', 'giltFuer', 'von', 'nach', 'bereich', 'topf', 'kommentar'].forEach((n) => setze(n, f[n]));
+    if (f.datum && !f.giltFuer) { const mo = f.datum.slice(0, 7); if ([...form.giltFuer.options].some((o) => o.value === mo)) form.giltFuer.value = mo; }
+    hinweis.innerHTML = `Vorausgefüllt${erkannt.length ? ': ' + h(erkannt.join(', ')) : ''}. Bitte kurz prüfen.${fehlt.length ? ` <b>Noch offen: ${h(fehlt.join(', '))}.</b>` : ''}`;
+    zusammen();
+  };
+  document.getElementById('satz-los').addEventListener('click', uebernehmen);
+  satzFeld.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); uebernehmen(); satzFeld.blur(); } });
+
+  const mikro = document.getElementById('mikro');
+  if (mikro) {
+    let erkennung = null;
+    mikro.addEventListener('click', () => {
+      if (erkennung) { erkennung.stop(); return; }
+      erkennung = new SR();
+      erkennung.lang = 'de-DE'; erkennung.interimResults = true; erkennung.maxAlternatives = 1; erkennung.continuous = false;
+      mikro.classList.add('hoert'); hinweis.textContent = 'Ich höre zu …';
+      erkennung.onresult = (e) => {
+        satzFeld.value = [...e.results].map((r) => r[0].transcript).join(' ');
+        if (e.results[e.results.length - 1].isFinal) uebernehmen();
+      };
+      erkennung.onerror = (e) => {
+        hinweis.textContent = e.error === 'not-allowed' || e.error === 'service-not-allowed'
+          ? 'Das Mikrofon ist für diese Seite gesperrt. In den Browser-Einstellungen erlauben oder den Satz tippen.'
+          : e.error === 'no-speech' ? 'Nichts gehört. Noch einmal auf das Mikrofon tippen.' : 'Spracherkennung gerade nicht möglich. Bitte tippen.';
+      };
+      erkennung.onend = () => { mikro.classList.remove('hoert'); erkennung = null; };
+      try { erkennung.start(); } catch { mikro.classList.remove('hoert'); erkennung = null; }
+    });
+  }
   if (!menu.open) menu.showModal();
 }
 
