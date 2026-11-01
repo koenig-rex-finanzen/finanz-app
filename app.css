@@ -1,0 +1,202 @@
+:root{
+  --bg:#EFF2EE; --surface:#FFFFFF; --sunk:#E4E9E5; --ink:#1C2826; --muted:#5C6B68; --line:#D3DBD7;
+  --gem:#2E7D6B; --gem-soft:#D7EAE4; --kai:#2F64A8; --kai-soft:#DCE6F4; --nat:#A8437A; --nat-soft:#F2DDE8;
+  --warn:#9A5F0E; --warn-soft:#F5E6CC; --spar:#5B6F2A; --spar-soft:#E4EAD2; --visa:#5A6B85; --visa-soft:#E1E6EE;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121917; --surface:#1A2421; --sunk:#222E2A; --ink:#E6ECE9; --muted:#9AAAA5; --line:#2D3A36;
+    --gem:#62B9A2; --gem-soft:#1F3A33; --kai:#86A9E2; --kai-soft:#1F2B40; --nat:#E28DBB; --nat-soft:#3A2230;
+    --warn:#E3A84E; --warn-soft:#3A2C16; --spar:#AFC46E; --spar-soft:#2A3220; --visa:#A9B7CD; --visa-soft:#262E3A; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121917; --surface:#1A2421; --sunk:#222E2A; --ink:#E6ECE9; --muted:#9AAAA5; --line:#2D3A36;
+  --gem:#62B9A2; --gem-soft:#1F3A33; --kai:#86A9E2; --kai-soft:#1F2B40; --nat:#E28DBB; --nat-soft:#3A2230;
+  --warn:#E3A84E; --warn-soft:#3A2C16; --spar:#AFC46E; --spar-soft:#2A3220; --visa:#A9B7CD; --visa-soft:#262E3A; color-scheme: dark;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"Schibsted Grotesk", system-ui, sans-serif; font-size:16px; line-height:1.45;
+  font-variant-numeric: tabular-nums;
+  padding-bottom:calc(84px + env(safe-area-inset-bottom));
+}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--gem);outline-offset:2px;border-radius:6px}
+.wrap{max-width:520px;margin:0 auto;padding:0 16px}
+
+/* Kopf */
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding-top:env(safe-area-inset-top)}
+.monat{display:flex;align-items:center;justify-content:space-between;height:56px}
+.monat h1{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.monat button{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;color:var(--muted)}
+.monat button:hover{background:var(--sunk)}
+
+/* Ansichten */
+.view{display:none}
+.view.on{display:block}
+section{margin:28px 0}
+h2{font-size:20px;font-weight:700;letter-spacing:-.015em;margin-bottom:12px}
+.hint{font-size:14px;color:var(--muted)}
+
+/* Hero-Satz */
+.hero{margin:20px 0 8px}
+.hero p{font-size:30px;line-height:1.12;font-weight:500;letter-spacing:-.025em}
+.hero strong{font-weight:800;color:var(--gem);white-space:nowrap}
+.hero strong.neg{color:var(--warn)}
+.check{display:inline-flex;align-items:center;gap:6px;margin-top:14px;font-size:14px;color:var(--gem);background:var(--gem-soft);padding:6px 10px 6px 8px;border-radius:999px}
+
+/* Wo das Geld liegt */
+.strip{display:flex;height:14px;border-radius:7px;overflow:hidden;gap:2px;margin:4px 0 16px}
+.strip span{display:block}
+.konten{background:var(--surface);border-radius:16px;overflow:hidden}
+.konto{display:grid;grid-template-columns:12px 1fr auto;gap:12px;align-items:center;padding:14px 16px;border-top:1px solid var(--line)}
+.konto:first-child{border-top:0}
+.dot{width:12px;height:12px;border-radius:4px}
+.konto .name{font-weight:600}
+.konto .sub{font-size:13px;color:var(--muted)}
+.konto .betrag{font-weight:700;text-align:right}
+.geparkt{display:flex;gap:12px;align-items:flex-start;margin-top:10px;padding:12px 14px;border:1.5px dashed var(--line);border-radius:14px;font-size:14px;color:var(--muted)}
+.geparkt b{color:var(--ink);font-weight:600}
+
+/* Überweisungen */
+.ueb{display:grid;gap:10px}
+.zahlung{background:var(--surface);border-radius:16px;padding:14px 16px;display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:center}
+.who{width:36px;height:36px;border-radius:18px;display:grid;place-items:center;font-weight:700;font-size:15px}
+.who.k{background:var(--kai-soft);color:var(--kai)}
+.who.n{background:var(--nat-soft);color:var(--nat)}
+.zahlung .route{font-weight:600}
+.zahlung .bis{font-size:13px;color:var(--muted)}
+.zahlung .betrag{font-weight:700;font-size:17px;text-align:right;white-space:nowrap}
+.anteil{margin-top:16px;background:var(--surface);border-radius:16px;padding:16px}
+.anteilbar{display:flex;height:10px;border-radius:5px;overflow:hidden;margin:10px 0 8px}
+.anteil .legend{display:flex;justify-content:space-between;font-size:14px}
+.anteil .legend b{font-weight:700}
+
+/* Monatsende */
+.ende{background:var(--surface);border-radius:16px;padding:16px;display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.ende .betrag{font-size:22px;font-weight:800;white-space:nowrap}
+.neg{color:var(--warn)}
+
+/* Monatsband: das Herzstück */
+.band{position:relative;margin-top:8px}
+.ev{position:relative;display:grid;grid-template-columns:44px 20px 1fr auto;gap:0 10px;align-items:start;min-height:64px}
+.ev .tag{text-align:right;padding-top:2px}
+.ev .tag b{display:block;font-size:22px;font-weight:800;line-height:1;letter-spacing:-.02em}
+.ev .tag span{font-size:12px;color:var(--muted)}
+.rail{position:relative;height:100%;display:flex;justify-content:center}
+.rail::before{content:"";position:absolute;top:0;bottom:0;width:4px;border-radius:2px;background:var(--seg,var(--gem))}
+.ev:first-child .rail::before{top:10px}
+.ev:last-child .rail::before{bottom:calc(100% - 12px)}
+.knot{position:relative;z-index:1;width:16px;height:16px;border-radius:8px;margin-top:4px;background:var(--surface);border:3px solid var(--seg,var(--gem))}
+.ev.plan .knot{border-style:dashed}
+.ev .was{padding:2px 0 16px}
+.ev .was .t{font-weight:600}
+.ev .was .s{font-size:13px;color:var(--muted)}
+.ev .zahlen{text-align:right;padding:2px 0 16px}
+.ev .zahlen .b{font-weight:700}
+.ev .zahlen .st{font-size:13px;color:var(--muted)}
+.plus{color:var(--gem)}
+.heute{display:grid;grid-template-columns:44px 20px 1fr;gap:0 10px;align-items:center;margin:-6px 0 10px}
+.heute .rail::before{background:var(--gem)}
+.heute .lbl{font-size:13px;font-weight:600;color:var(--ink);background:var(--sunk);padding:4px 10px;border-radius:999px;justify-self:start}
+.legende{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:16px}
+.legende i{display:inline-block;width:12px;height:12px;border-radius:6px;border:3px solid var(--gem);vertical-align:-1px;margin-right:6px;background:var(--surface)}
+.legende i.d{border-style:dashed}
+
+/* Töpfe */
+.topfsumme{background:var(--surface);border-radius:16px;padding:16px}
+.topfsumme .z{display:flex;justify-content:space-between;padding:6px 0}
+.topfsumme .z+.z{border-top:1px solid var(--line)}
+.leer{margin-top:12px;padding:20px 16px;border-radius:16px;background:var(--sunk);color:var(--muted);font-size:15px}
+
+/* Buchungen */
+.filter{display:flex;gap:8px;overflow-x:auto;margin-bottom:12px;scrollbar-width:none}
+.filter button{flex:none;padding:8px 14px;border-radius:999px;background:var(--surface);font-size:14px;font-weight:500;border:1px solid var(--line)}
+.filter button[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.buchungen{background:var(--surface);border-radius:16px;overflow:hidden}
+.bu{width:100%;text-align:left;display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:14px 16px;border-top:1px solid var(--line)}
+.bu:first-child{border-top:0}
+.bu .t{font-weight:600}
+.bu .betrag{font-weight:700;text-align:right}
+.bu .r{grid-column:1/-1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.chip{display:inline-block;padding:2px 8px;border-radius:6px;font-size:13px;font-weight:500}
+.c-gem{background:var(--gem-soft);color:var(--gem)}
+.c-kai{background:var(--kai-soft);color:var(--kai)}
+.c-nat{background:var(--nat-soft);color:var(--nat)}
+.c-ext{background:var(--sunk);color:var(--muted)}
+.c-spar{background:var(--spar-soft);color:var(--spar)}
+.c-visa{background:var(--visa-soft);color:var(--visa)}
+.bu .more{grid-column:1/-1;display:none;margin-top:8px;padding:10px 12px;background:var(--sunk);border-radius:10px;font-size:14px;color:var(--ink)}
+.bu .more dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px}
+.bu .more dt{color:var(--muted)}
+.bu[aria-expanded="true"] .more{display:block}
+.okt{font-size:12px;font-weight:600;color:var(--warn)}
+
+/* Tab-Leiste */
+nav{position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+nav .wrap{display:grid;grid-template-columns:repeat(4,1fr);height:64px}
+nav button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:12px;font-weight:500;color:var(--muted)}
+nav button svg{width:24px;height:24px}
+nav button[aria-selected="true"]{color:var(--ink)}
+nav button[aria-selected="true"] svg{color:var(--gem)}
+
+@media (prefers-reduced-motion:no-preference){
+  .view.on .band .ev{animation:ein .35s ease-out both}
+  @keyframes ein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+}
+
+/* ---- Ergänzungen für die echte App ---- */
+.menu{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;color:var(--muted)}
+.monat .mitte{text-align:center}
+.monat .mitte small{display:block;font-size:12px;color:var(--muted);font-weight:500;margin-top:-2px}
+.monat button:disabled{opacity:.3;cursor:default}
+.hinweis{font-size:14px;border-radius:12px;padding:12px 14px;margin:12px 0}
+.hinweis.warn{color:var(--warn);background:var(--warn-soft)}
+.hinweis.info{color:var(--muted);background:var(--sunk)}
+.check.offen{color:var(--muted);background:var(--sunk)}
+.check.warn{color:var(--warn);background:var(--warn-soft)}
+.zahlung.erledigt .betrag{color:var(--gem)}
+.status{grid-column:2/-1;font-size:13px;font-weight:600}
+.status.ok{color:var(--gem)}
+.status.offen{color:var(--muted)}
+.ev.ohne .tag b{font-size:15px;color:var(--muted)}
+.toepfe{background:var(--surface);border-radius:16px;overflow:hidden}
+.topf{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:12px 16px;border-top:1px solid var(--line)}
+.topf:first-child{border-top:0}
+.topf .n{font-weight:600}
+.topf .b{font-weight:700;text-align:right}
+.topf .s{font-size:13px;color:var(--muted)}
+.topf .bar{grid-column:1/-1;height:6px;border-radius:3px;background:var(--sunk);overflow:hidden;margin-top:6px}
+.topf .bar span{display:block;height:100%;background:var(--spar);border-radius:3px}
+.topf.minus .b{color:var(--warn)}
+.topf.minus .bar span{background:var(--warn)}
+.gruppe{font-size:14px;font-weight:600;color:var(--muted);margin:20px 0 8px}
+.offen-liste{background:var(--surface);border-radius:16px;overflow:hidden}
+.offen-liste li{list-style:none;padding:12px 16px;border-top:1px solid var(--line);font-size:15px}
+.offen-liste li:first-child{border-top:0}
+.offen-liste li b{display:block;font-size:13px;color:var(--muted);font-weight:600}
+
+/* Startbildschirm */
+.start{min-height:100dvh;display:flex;flex-direction:column;justify-content:center;padding:32px 16px 48px}
+.start .zeichen{width:72px;height:72px;margin-bottom:28px}
+.start h1{font-size:36px;line-height:1.05;font-weight:800;letter-spacing:-.03em;margin-bottom:14px}
+.start p{font-size:17px;color:var(--muted);max-width:30em;margin-bottom:28px}
+.knopf{display:inline-flex;align-items:center;justify-content:center;gap:10px;height:52px;padding:0 22px;border-radius:26px;background:var(--ink);color:var(--bg);font-weight:700;font-size:16px;cursor:pointer}
+.knopf.leise{background:var(--surface);color:var(--ink);border:1px solid var(--line)}
+.start .klein{font-size:14px;margin-top:20px;margin-bottom:0}
+.fehler{color:var(--warn);font-size:15px;margin-top:16px}
+
+/* Menü-Blatt */
+dialog{margin:auto auto 0;width:100%;max-width:520px;border:0;border-radius:20px 20px 0 0;background:var(--surface);color:var(--ink);padding:20px 16px calc(20px + env(safe-area-inset-bottom))}
+dialog::backdrop{background:rgba(10,20,18,.45)}
+dialog h2{font-size:18px}
+dialog .zeile{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line);font-size:15px}
+dialog .zeile:first-of-type{border-top:0}
+dialog .knoepfe{display:grid;gap:10px;margin-top:16px}
+input[type=file]{position:absolute;width:1px;height:1px;opacity:0}
+button.link{color:inherit;font-weight:700;text-decoration:underline;padding:0;margin-left:4px}
+a.knopf{text-decoration:none}
