@@ -125,6 +125,16 @@ export async function leseBuchhaltung(daten) {
       .map((r) => ({ nr: r['Nr'], thema: text(r['Thema']), text: text(r['Was ist offen']), erledigt: r['Erledigt'] === 'ja' }));
   } catch { /* Blatt optional */ }
 
+  // Auswahllisten (Blatt „Listen“) – fürs Eintragen
+  const listen = { monate: [], arten: [], bereiche: [], quellen: [], personen: [] };
+  try {
+    const lz = tabelle(blatt(mappe, 'Listen'), 'Monate', { maxKopfZeile: 3 });
+    const spalte = (name, f = text) => lz.map((r) => r[name]).filter((v) => v != null).map(f).filter(Boolean);
+    listen.monate = spalte('Monate', (v) => monatVon(excelDatum(v)));
+    listen.arten = spalte('Art'); listen.bereiche = spalte('Bereiche');
+    listen.quellen = spalte('Quelle'); listen.personen = spalte('Personen');
+  } catch { /* Blatt optional */ }
+
   // Was Excel gerade auf „Start“ ausgerechnet hat – zum Abgleich
   const start = blatt(mappe, 'Start').zellen;
   const excelMonat = monatVon(excelDatum(start.get('C4')));
@@ -134,7 +144,7 @@ export async function leseBuchhaltung(daten) {
     if (typeof name === 'string' && konten.some((k) => k.name === name)) excelKontostaende[name] = zahl(start.get('C' + r));
   }
 
-  return { konten, kosten, einnahmen, toepfe, buchungen, kontostaendeBank, aufteilung, offenePunkte,
+  return { konten, kosten, einnahmen, toepfe, buchungen, kontostaendeBank, aufteilung, offenePunkte, listen,
     excel: { monat: excelMonat, kontostaende: excelKontostaende } };
 }
 

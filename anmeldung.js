@@ -69,7 +69,10 @@ export async function token() {
   if (t.access && t.ablauf > Date.now()) return t.access;
   if (!t.refresh) return null;
   try { return (await tokenAnfrage({ grant_type: 'refresh_token', refresh_token: t.refresh })).access; }
-  catch { const k = t.konto; schreiben(SPEICHER, k ? { konto: k } : null); return null; }
+  catch (e) {
+    if (e instanceof TypeError) throw e; // kein Netz: Anmeldung behalten
+    const k = t.konto; schreiben(SPEICHER, k ? { konto: k } : null); return null;
+  }
 }
 
 export function kontoMerken(konto) { const t = lesen(SPEICHER) || {}; t.konto = konto; schreiben(SPEICHER, t); }

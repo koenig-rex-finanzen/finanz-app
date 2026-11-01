@@ -4,7 +4,7 @@ import { monatsansicht, monate, monatsname, monatPlus, eur } from './kern/rechne
 import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 
-const VERSION = '0.2.2';
+const VERSION = '0.3.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -90,7 +90,12 @@ async function ausOneDrive({ immer = false } = {}) {
   if (z.modell) { z.status = { art: 'info', text: 'Prüfe OneDrive auf Änderungen …' }; zeichne(); }
   try {
     const gefunden = await od.dateiFinden();
-    if (!gefunden) { z.laedt = false; z.status = null; zeigeNichtGefunden(); return; }
+    if (!gefunden) {
+      z.laedt = false;
+      if (z.modell) { z.status = { art: 'warn', text: 'Die Datei wurde in OneDrive nicht mehr gefunden (umbenannt oder verschoben?). Ihr seht den zuletzt geladenen Stand.' }; zeichne(); }
+      else zeigeNichtGefunden();
+      return;
+    }
     await ladeGefunden(gefunden, immer);
   } catch (e) {
     z.laedt = false;
@@ -99,7 +104,8 @@ async function ausOneDrive({ immer = false } = {}) {
       else zeigeStart();
       return;
     }
-    if (z.modell) { z.status = { art: 'warn', text: 'OneDrive war nicht erreichbar (' + e.message + '). Ihr seht den zuletzt geladenen Stand.', knopf: ['aktualisieren', 'Noch mal versuchen'] }; zeichne(); }
+    const offline = e instanceof od.KeinNetz;
+    if (z.modell) { z.status = { art: offline ? 'info' : 'warn', text: offline ? 'Gerade keine Verbindung. Ihr seht den zuletzt geladenen Stand.' : 'OneDrive meldet einen Fehler (' + e.message + '). Ihr seht den zuletzt geladenen Stand.', knopf: ['aktualisieren', 'Noch mal versuchen'] }; zeichne(); }
     else zeigeStart('OneDrive war nicht erreichbar: ' + e.message);
     return;
   }
@@ -194,6 +200,7 @@ function zeichne() {
     <div class="view ${z.tab === 'toepfe' ? 'on' : ''}" role="tabpanel">${toepfe(v)}</div>
     <div class="view ${z.tab === 'buchungen' ? 'on' : ''}" role="tabpanel">${buchungen(v)}</div>
   </main>
+  ${kannEintragen() ? `<button class="fab" id="eintragen-knopf" aria-label="Buchung eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>` : ''}
   <nav><div class="wrap" role="tablist">${TABS.map(([id, name, pfad]) =>
     `<button role="tab" aria-selected="${z.tab === id}" data-tab="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${pfad}</svg>${name}</button>`).join('')}</div></nav>`;
 }
@@ -364,6 +371,104 @@ function zeigeMenu() {
   menu.showModal();
 }
 
+
+// ---------- Eintragen
+const kannEintragen = () => ms.aktiv() && ms.angemeldet() && z.datei?.quelle === 'onedrive' && !!od.aktuellerOrt();
+const STANDARD = {
+  Ausgabe: (k) => ({ von: k.gem, nach: k.extern }),
+  Einnahme: (k) => ({ von: k.extern, nach: k.gem }),
+  Umbuchung: (k) => ({ von: k.gem, nach: k.visa }),
+};
+function betragLesen(t) {
+  const s = String(t || '').trim().replace(/\s|€/g, '');
+  if (!s) return NaN;
+  const norm = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+  return Math.round(Number(norm) * 100) / 100;
+}
+function zeigeEintragen(fehler, vorher) {
+  const m = z.modell;
+  const konten = m.konten.filter((k) => k.status !== 'geschlossen').map((k) => k.name);
+  const kn = {
+    gem: m.konten.find((k) => k.rolle === 'gemeinsam' && /giro/i.test(k.art || ''))?.name || konten[0],
+    visa: m.konten.find((k) => k.rolle === 'gemeinsam' && /kredit|visa/i.test((k.art || '') + k.name))?.name || konten[0],
+    extern: m.konten.find((k) => k.rolle === 'extern')?.name || 'Extern',
+  };
+  const h0 = heute();
+  const vormonat = monatPlus(h0.slice(0, 7), -1);
+  const monateAuswahl = [...new Set([vormonat, ...(m.listen?.monate || monate(m))])].sort();
+  const toepfe = ['Sparplan (verteilt)', ...m.toepfe.map((t) => t.name)];
+  const postenListe = [...new Set([...m.kosten.map((k) => k.posten), ...m.einnahmen.map((e) => e.posten), ...m.buchungen.map((b) => b.posten)].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
+  const v = vorher || { art: 'Ausgabe', datum: h0, giltFuer: z.monat && z.monat >= vormonat ? (h0.slice(0, 7) === z.monat ? z.monat : z.monat) : h0.slice(0, 7), ...STANDARD.Ausgabe(kn), bereich: '', topf: '', posten: '', betrag: '', beschreibung: '', kommentar: '', gezahltVon: '' };
+  const opt = (liste, wert, leer) => (leer ? `<option value="">${leer}</option>` : '') + liste.map((x) => `<option value="${h(x)}" ${x === wert ? 'selected' : ''}>${h(x)}</option>`).join('');
+  menu.innerHTML = `<form id="eintragen-form" novalidate>
+    <h2 id="menu-titel">Buchung eintragen</h2>
+    <div class="seg" role="radiogroup" aria-label="Art">${['Ausgabe', 'Einnahme', 'Umbuchung'].map((a) =>
+      `<label><input type="radio" name="art" value="${a}" ${v.art === a ? 'checked' : ''}><span>${a}</span></label>`).join('')}</div>
+    <label class="feld"><span>Betrag in €</span><input name="betrag" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${h(v.betrag)}" required></label>
+    <label class="feld"><span>Wofür</span><input name="posten" list="posten-liste" autocomplete="off" placeholder="z. B. Lidl-Einkauf" value="${h(v.posten)}" required>
+      <datalist id="posten-liste">${postenListe.map((p) => `<option value="${h(p)}">`).join('')}</datalist></label>
+    <div class="zwei">
+      <label class="feld"><span>Bezahlt am</span><input type="date" name="datum" value="${h(v.datum)}" required></label>
+      <label class="feld"><span>Gilt für</span><select name="giltFuer">${monateAuswahl.map((mo) => `<option value="${mo}" ${mo === v.giltFuer ? 'selected' : ''}>${monatsname(mo, true)}</option>`).join('')}</select></label>
+    </div>
+    <div class="zwei">
+      <label class="feld"><span>Von</span><select name="von">${opt(konten, v.von)}</select></label>
+      <label class="feld"><span>Nach</span><select name="nach">${opt(konten, v.nach)}</select></label>
+    </div>
+    <label class="feld"><span>Bereich</span><select name="bereich">${opt(m.listen?.bereiche || [], v.bereich, 'bitte wählen')}</select></label>
+    <label class="feld"><span>Topf <small>(nur wenn Geld aufs Tagesgeld geht oder von dort kommt)</small></span><select name="topf">${opt(toepfe, v.topf, 'kein Topf')}</select></label>
+    <label class="feld"><span>Verwendungszweck <small>(optional)</small></span><input name="beschreibung" autocomplete="off" value="${h(v.beschreibung)}"></label>
+    <label class="feld"><span>Kommentar <small>(optional)</small></span><input name="kommentar" autocomplete="off" value="${h(v.kommentar)}"></label>
+    <label class="feld"><span>Gezahlt von <small>(nur wenn es nicht vom eigenen Konto kommt, z. B. Elterngeld)</small></span><select name="gezahltVon">${opt(['Kai', 'Natalie'], v.gezahltVon, '–')}</select></label>
+    <p class="zusammen" id="zusammen"></p>
+    ${fehler ? `<p class="fehler">${h(fehler)}</p>` : ''}
+    <div class="knoepfe"><button class="knopf" type="submit" id="eintragen-los">Eintragen</button><button class="knopf leise" type="button" id="schliessen">Abbrechen</button></div>
+  </form>`;
+  const form = document.getElementById('eintragen-form');
+  const zusammen = () => {
+    const d = Object.fromEntries(new FormData(form));
+    const b = betragLesen(d.betrag);
+    document.getElementById('zusammen').textContent = isFinite(b) && b > 0
+      ? `${d.art} über ${eur(b)} von ${d.von} an ${d.nach}, gilt für ${monatsname(d.giltFuer)}.` : '';
+  };
+  form.addEventListener('input', zusammen);
+  form.addEventListener('change', (ev) => {
+    if (ev.target.name === 'art') { const s = STANDARD[ev.target.value](kn); form.von.value = s.von; form.nach.value = s.nach; zusammen(); }
+    if (ev.target.name === 'datum' && ev.target.value) { const mo = ev.target.value.slice(0, 7); if ([...form.giltFuer.options].some((o) => o.value === mo)) form.giltFuer.value = mo; zusammen(); }
+  });
+  zusammen();
+  if (!menu.open) menu.showModal();
+}
+
+document.addEventListener('submit', async (ev) => {
+  if (ev.target.id !== 'eintragen-form') return;
+  ev.preventDefault();
+  const form = ev.target;
+  const d = Object.fromEntries(new FormData(form));
+  const betrag = betragLesen(d.betrag);
+  const fehler = !(betrag > 0) ? 'Bitte einen Betrag größer als 0 eingeben.'
+    : !d.posten.trim() ? 'Bitte eintragen, wofür das Geld war.'
+      : !d.datum ? 'Bitte das Datum angeben.'
+        : d.von === d.nach ? 'Von und Nach sind dasselbe Konto.'
+          : !d.bereich ? 'Bitte einen Bereich wählen.' : null;
+  if (fehler) { zeigeEintragen(fehler, d); return; }
+  const knopf = document.getElementById('eintragen-los');
+  knopf.disabled = true; knopf.textContent = 'Wird eingetragen …';
+  try {
+    const { nr } = await od.buchungEintragen(od.aktuellerOrt(), { ...d, betrag, posten: d.posten.trim() });
+    menu.close();
+    z.status = { art: 'info', text: `${nr} eingetragen: ${d.posten.trim()}, ${eur(betrag)}.` };
+    zeichne();
+    await ausOneDrive({ immer: true });
+    z.status = { art: 'info', text: `${nr} eingetragen: ${d.posten.trim()}, ${eur(betrag)}.` };
+    zeichne();
+  } catch (e) {
+    if (e instanceof od.AnmeldungNoetig) { zeigeEintragen('Die Anmeldung ist abgelaufen. Bitte im Menü neu anmelden, dann noch einmal eintragen.', d); return; }
+    if (e instanceof od.KeinNetz) { zeigeEintragen('Gerade keine Verbindung zu OneDrive. Es wurde nichts eingetragen, bitte gleich noch einmal versuchen.', d); return; }
+    zeigeEintragen('Das Eintragen hat nicht geklappt: ' + e.message + ' Es wurde nichts doppelt gespeichert; bitte in Excel nachsehen, bevor ihr es noch einmal versucht.', d);
+  }
+});
+
 // ---------- Ereignisse
 document.addEventListener('click', async (ev) => {
   const t = ev.target.closest('button, [data-monat]');
@@ -373,6 +478,7 @@ document.addEventListener('click', async (ev) => {
   if (t.dataset.filter) { z.filter = t.dataset.filter; zeichne(); return; }
   if (t.classList.contains('bu')) { t.setAttribute('aria-expanded', t.getAttribute('aria-expanded') === 'true' ? 'false' : 'true'); return; }
   if (t.id === 'menu-knopf') { zeigeMenu(); return; }
+  if (t.id === 'eintragen-knopf') { zeigeEintragen(); return; }
   if (t.id === 'schliessen') { menu.close(); return; }
   if (t.id === 'anmelden') { ms.anmelden({ konto: t.closest('.start') ? null : ms.gemerktesKonto() }); return; }
   if (t.id === 'aktualisieren') { if (menu.open) menu.close(); ausOneDrive({ immer: true }); return; }
