@@ -177,6 +177,9 @@ export function monatsansicht(modell, monat, heute) {
     ereignisse.push({ art: 'geplant', tag: u.tag, titel: `Überweisung von ${u.person}`, betrag: u.offen,
       bemerkung: `Anteil für ${monatsname(monat)}`, person: u.person });
   }
+  // Vergangene Monate: Geplantes, das nicht gebucht wurde, gehört nicht in den Verlauf, sondern in die Liste „nicht gebucht“
+  const offenGeplant = ereignisse.filter((e) => e.art === 'geplant');
+  if (vergangen) for (let i = ereignisse.length - 1; i >= 0; i--) if (ereignisse[i].art === 'geplant') ereignisse.splice(i, 1);
   // Sortierung: nach Tag; am selben Tag erst Gebuchtes, dann Eingänge, dann Abgänge. Ohne Tag ans Ende.
   ereignisse.sort((x, y) => (x.tag ?? 99) - (y.tag ?? 99)
     || (x.art === y.art ? 0 : x.art === 'gebucht' ? -1 : 1)
@@ -189,7 +192,7 @@ export function monatsansicht(modell, monat, heute) {
     : kontostand(modell, gem, vormonatsEnde);
   let lauf = startstand;
   for (const e of ereignisse) { lauf = r2(lauf + e.betrag); e.danach = lauf; }
-  const ablauf = { konto: gem, start: startstand, startDatum: vormonatsEnde, startIstPrognose: zukunft, ereignisse, ende: lauf };
+  const ablauf = { konto: gem, start: startstand, startDatum: vormonatsEnde, startIstPrognose: zukunft, ereignisse, ende: lauf, offenGeplant };
 
   // ---- Buchungen des Monats (gilt für diesen Monat oder in diesem Monat gezahlt)
   const buchungen = modell.buchungen

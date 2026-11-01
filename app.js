@@ -5,7 +5,7 @@ import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 
-const VERSION = '0.5.1';
+const VERSION = '0.6.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');

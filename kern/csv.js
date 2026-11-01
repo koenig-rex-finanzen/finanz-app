@@ -260,8 +260,9 @@ export function analysieren(dateien, modell, regeln = []) {
     return { csv: c, konto: k, importieren: true, hinweis: null };
   });
 
-  const vorhandeneIds = new Set(modell.buchungen.map((b) => b.importId).filter(Boolean));
-  const vergeben = new Set(); // Buchungsnummern, die schon einer CSV-Zeile zugeordnet sind
+  // Import-IDs, die schon in der Datei stehen (eine Buchung kann mehrere haben, getrennt durch Leerzeichen)
+  const idsDatei = new Map();
+  for (const b of modell.buchungen) for (const id of (b.importId || '').split(/\s+/).filter(Boolean)) idsDatei.set(id, b.nr);
   const zeilen = [];
   dateiInfo.forEach((d, di) => {
     if (!d.importieren) return;
@@ -274,43 +275,99 @@ export function analysieren(dateien, modell, regeln = []) {
       const gegen = gegenkonto(z.info, modell, k.name, importNummern);
       const { buchung, ampel, grund } = vorschlagen(z, k.name, gegen, modell, regeln);
       buchung.importId = id;
-      const eintrag = { id, datei: di, konto: k.name, zeile: z, buchung, ampel, grund, status: 'neu', auswahl: true, treffer: null };
-      if (vorhandeneIds.has(id)) { eintrag.status = 'importiert'; eintrag.auswahl = false; }
-      else {
-        // Schon von Hand eingetragen? gleiches Konto, gleicher Betrag, Datum ±3 Tage
-        const kandidaten = modell.buchungen.filter((b) => !b.importId && !vergeben.has(b.nr) && b.datum
-          && Math.abs(b.betrag - Math.abs(z.betrag)) < 0.005
-          && ((z.betrag < 0 && b.von === k.name) || (z.betrag > 0 && b.nach === k.name))
-          && Math.min(Math.abs(tag(b.datum) - tag(z.datum)), z.wertstellung ? Math.abs(tag(b.datum) - tag(z.wertstellung)) : 99) <= 3)
-          .sort((a, b) => Math.abs(tag(a.datum) - tag(z.datum)) - Math.abs(tag(b.datum) - tag(z.datum)));
-        if (kandidaten.length) {
-          const b = kandidaten[0]; vergeben.add(b.nr);
-          eintrag.status = 'eingetragen'; eintrag.treffer = b.nr; eintrag.auswahl = true;
-          eintrag.grund = `schon eingetragen als ${b.nr} (${b.posten || b.beschreibung || ''})`;
-        } else if (k.stichtag && z.datum <= k.stichtag) {
-          eintrag.status = 'vor-stichtag'; eintrag.auswahl = false;
-        }
-      }
+      const eintrag = { id, datei: di, konto: k.name, kontoId: k.id, zeile: z, buchung, ampel, grund, status: 'neu', auswahl: true, treffer: null };
+      if (idsDatei.has(id)) { eintrag.status = 'importiert'; eintrag.auswahl = false; eintrag.treffer = [idsDatei.get(id)]; eintrag.grund = `schon importiert (${idsDatei.get(id)})`; }
       zeilen.push(eintrag);
     }
   });
 
-  // Umbuchungen, die in zwei Exporten vorkommen → nur einmal buchen
+  // ---- Abgleich mit dem, was ihr selbst eingetragen habt (je Konto)
+  const cent = (x) => Math.round(x * 100);
+  const daten = (l) => [l.zeile.datum, l.zeile.wertstellung, l.zeile.kartendatum].filter(Boolean);
+  const abstand = (l, b) => Math.min(...daten(l).map((d) => Math.abs(tag(b.datum) - tag(d))));
+  const kurz = (b) => `${b.nr} ${b.posten || b.beschreibung || ''}`.trim();
+  const teilmenge = (werte, ziel, max = 4) => { // kleinste Kombination aus 2..max Werten mit Summe = ziel
+    const n = Math.min(werte.length, 14);
+    for (let g = 2; g <= max; g++) {
+      const idx = [];
+      const suche = (start, rest, tiefe) => {
+        if (tiefe === g) return rest === 0;
+        for (let i = start; i < n; i++) { idx.push(i); if (suche(i + 1, rest - werte[i], tiefe + 1)) return true; idx.pop(); }
+        return false;
+      };
+      if (suche(0, ziel, 0)) return idx.slice();
+    }
+    return null;
+  };
+  const nurDatei = {};
+  for (const d of dateiInfo.filter((x) => x.importieren)) {
+    const k = d.konto;
+    const s = (b) => (b.nach === k.name ? b.betrag : -b.betrag);
+    // Buchungen dieses Kontos, die noch keine Import-ID von diesem Konto haben
+    const frei = modell.buchungen.filter((b) => b.datum && (b.von === k.name || b.nach === k.name)
+      && !(b.importId || '').split(/\s+/).some((id) => id.startsWith(k.id + '-')));
+    const offen = () => zeilen.filter((l) => l.konto === k.name && l.status === 'neu');
+    const nutze = (b) => frei.splice(frei.indexOf(b), 1);
+    const markiere = (l, bs, ampel, grund) => { l.status = 'eingetragen'; l.treffer = bs.map((b) => b.nr); l.auswahl = true; l.ampel = ampel; l.grund = grund; };
+
+    // 1. gleicher Betrag, Datum höchstens 3 Tage auseinander
+    const paare = [];
+    for (const l of offen()) for (const b of frei) if (cent(s(b)) === cent(l.zeile.betrag) && abstand(l, b) <= 3) paare.push([abstand(l, b), l, b]);
+    paare.sort((a, b) => a[0] - b[0]);
+    for (const [, l, b] of paare) if (l.status === 'neu' && frei.includes(b)) { nutze(b); markiere(l, [b], 'sicher', `schon eingetragen als ${kurz(b)}`); }
+
+    // 2. mehrere eurer Buchungen = eine Bankzeile
+    for (const l of offen()) {
+      const kand = frei.filter((b) => Math.sign(s(b)) === Math.sign(l.zeile.betrag) && abstand(l, b) <= 5);
+      const t = kand.length >= 2 && teilmenge(kand.map((b) => cent(s(b))), cent(l.zeile.betrag));
+      if (t) { const bs = t.map((i) => kand[i]); bs.forEach(nutze); markiere(l, bs, 'pruefen', `zusammen eingetragen als ${bs.map((b) => b.nr).join(' + ')}`); }
+    }
+    // 3. eine eurer Buchungen = mehrere Bankzeilen
+    for (const b of [...frei]) {
+      const kand = offen().filter((l) => Math.sign(l.zeile.betrag) === Math.sign(s(b)) && abstand(l, b) <= 5);
+      const t = kand.length >= 2 && teilmenge(kand.map((l) => cent(l.zeile.betrag)), cent(s(b)));
+      if (t) { nutze(b); t.map((i) => kand[i]).forEach((l, _, alle) => markiere(l, [b], 'pruefen', `${alle.length} Bankzeilen ergeben zusammen ${kurz(b)}`)); }
+    }
+    // 4. Unklar: gleicher Betrag mit größerem Datumsabstand oder fast gleicher Betrag (Tippfehler)
+    const ziffern = (x) => String(Math.abs(cent(x))).split('').sort().join('');
+    for (const l of offen()) {
+      const kand = frei.map((b) => {
+        const a = abstand(l, b), gleich = cent(s(b)) === cent(l.zeile.betrag);
+        const fast = !gleich && Math.sign(s(b)) === Math.sign(l.zeile.betrag)
+          && (Math.abs(s(b) - l.zeile.betrag) <= Math.max(1, Math.abs(l.zeile.betrag) * 0.05) || ziffern(s(b)) === ziffern(l.zeile.betrag));
+        return (gleich && a <= 10) || (fast && a <= 3) ? { b, a, gleich } : null;
+      }).filter(Boolean).sort((x, y) => (y.gleich - x.gleich) || (x.a - y.a));
+      if (!kand.length) continue;
+      const { b, a, gleich } = kand[0];
+      nutze(b);
+      l.status = 'vielleicht'; l.auswahl = false; l.ampel = 'pruefen'; l.entscheidung = null;
+      l.kandidat = { nr: b.nr, posten: b.posten, datum: b.datum, betrag: s(b) };
+      l.grund = gleich ? `Vielleicht schon eingetragen als ${kurz(b)} – Datum weicht ${a} Tage ab`
+        : `Vielleicht schon eingetragen als ${kurz(b)} – dort steht ${Math.abs(s(b)).toFixed(2).replace('.', ',')} € statt ${Math.abs(l.zeile.betrag).toFixed(2).replace('.', ',')} €`;
+    }
+    // Rest: vor dem Stichtag oder neu
+    for (const l of offen()) if (k.stichtag && l.zeile.datum <= k.stichtag) { l.status = 'vor-stichtag'; l.auswahl = false; }
+    // In der Datei, aber nicht auf dem Auszug (im Zeitraum des Auszugs)
+    const vonD = d.csv.von || '0000', bisD = d.csv.bis || '9999';
+    nurDatei[k.name] = frei.filter((b) => b.datum >= vonD && b.datum <= bisD && !(b.importId || '').trim())
+      .map((b) => ({ nr: b.nr, posten: b.posten, datum: b.datum, betrag: s(b), vorStichtag: !!(k.stichtag && b.datum <= k.stichtag) }));
+  }
+
+  // ---- Umbuchungen, die in zwei Exporten vorkommen → nur einmal buchen
   for (const a of zeilen) {
-    if (a.buchung.art !== 'Umbuchung' || a.status === 'gegenbuchung') continue;
-    const b = zeilen.find((x) => x !== a && x.status !== 'gegenbuchung' && x.konto !== a.konto
+    if (a.status !== 'neu' && a.status !== 'vor-stichtag') continue;
+    if (a.buchung.art !== 'Umbuchung') continue;
+    const b = zeilen.find((x) => x !== a && (x.status === 'neu' || x.status === 'vor-stichtag') && x.konto !== a.konto
       && x.buchung.art === 'Umbuchung' && Math.abs(x.zeile.betrag + a.zeile.betrag) < 0.005
       && x.buchung.von === a.buchung.von && x.buchung.nach === a.buchung.nach
       && Math.abs(tag(x.zeile.datum) - tag(a.zeile.datum)) <= 3);
     if (!b) continue;
-    // Die abgehende Seite trägt die Buchung, die eingehende wird Gegenbuchung
     const [haupt, gegen] = a.zeile.betrag < 0 ? [a, b] : [b, a];
-    if (gegen.status === 'eingetragen' && haupt.status !== 'eingetragen') { haupt.status = 'eingetragen'; haupt.treffer = gegen.treffer; haupt.grund = gegen.grund; }
     gegen.status = 'gegenbuchung'; gegen.auswahl = false; gegen.grund = `Gegenbuchung zu ${haupt.konto}, ${haupt.zeile.datum.split('-').reverse().join('.')}`;
     gegen.gegenId = haupt.id; haupt.gegenId = gegen.id;
   }
 
-  // Saldo-Abgleich je Konto
+  // ---- Saldo-Abgleich je Konto
   const abgleich = dateiInfo.filter((d) => d.importieren).map((d) => {
     const k = d.konto; const bis = d.csv.bis || d.csv.zeilen.reduce((m, z) => (z.datum > m ? z.datum : m), '');
     const datei = kontostand(modell, k.name, bis);
@@ -318,15 +375,12 @@ export function analysieren(dateien, modell, regeln = []) {
     const nachStichtag = (z) => !k.stichtag || z.zeile.datum > k.stichtag;
     const hauptNeu = (z) => { const h = zeilen.find((x) => x.id === z.gegenId); return h && h.status === 'neu'; };
     const neu = r2(eigene.filter((z) => nachStichtag(z) && (z.status === 'neu' || (z.status === 'gegenbuchung' && hauptNeu(z)))).reduce((s, z) => s + z.zeile.betrag, 0));
-    // Buchungen in der Datei nach dem Stichtag, die im Export fehlen
-    const getroffen = new Set(zeilen.filter((z) => z.treffer).map((z) => z.treffer));
-    const fehlen = modell.buchungen.filter((b) => b.datum && (!k.stichtag || b.datum > k.stichtag) && b.datum <= bis
-      && (b.von === k.name || b.nach === k.name) && !getroffen.has(b.nr) && !(b.importId && eigene.some((z) => z.id === b.importId)))
-      .map((b) => ({ nr: b.nr, posten: b.posten, datum: b.datum, betrag: b.nach === k.name ? b.betrag : -b.betrag }));
+    const unklar = eigene.filter((z) => z.status === 'vielleicht');
+    const fehlen = (nurDatei[k.name] || []).filter((b) => !b.vorStichtag && b.datum <= bis);
     const fehlenSumme = r2(fehlen.reduce((s, b) => s + b.betrag, 0));
     const differenz = r2(d.csv.saldo - datei);
-    return { konto: k.name, bis, bank: d.csv.saldo, datei, differenz, neu, fehlen, fehlenSumme, rest: r2(differenz - neu + fehlenSumme) };
+    return { konto: k.name, bis, bank: d.csv.saldo, datei, differenz, neu, fehlen, fehlenSumme, unklar: unklar.length, rest: r2(differenz - neu + fehlenSumme) };
   });
 
-  return { dateien: dateiInfo.map((d) => ({ name: d.csv.dateiname, konto: d.konto?.name || null, kontoText: d.csv.kontoText, saldo: d.csv.saldo, von: d.csv.von, bis: d.csv.bis, anzahl: d.csv.zeilen.length, importieren: d.importieren, hinweis: d.hinweis })), zeilen, abgleich };
+  return { dateien: dateiInfo.map((d) => ({ name: d.csv.dateiname, konto: d.konto?.name || null, kontoText: d.csv.kontoText, saldo: d.csv.saldo, von: d.csv.von, bis: d.csv.bis, anzahl: d.csv.zeilen.length, importieren: d.importieren, hinweis: d.hinweis })), zeilen, abgleich, nurDatei };
 }

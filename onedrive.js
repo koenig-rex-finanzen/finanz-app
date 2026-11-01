@@ -150,7 +150,7 @@ export async function buchungEintragen(ort, b) {
  * @param {Array<{nr:string, importId:string}>} ergaenzen
  * @returns {Promise<{nummern:string[], ergaenzt:number}>}
  */
-export async function buchungenSchreiben(ort, neue, ergaenzen = []) {
+export async function buchungenSchreiben(ort, neue, ergaenzen = [], korrekturen = []) {
   const W = `/drives/${ort.driveId}/items/${ort.itemId}/workbook`;
   const json = (o) => ({ ...o, headers: { 'Content-Type': 'application/json', ...(o.headers || {}) } });
   const sitzung = await graph(W + '/createSession', json({ method: 'POST', body: JSON.stringify({ persistChanges: true }) }));
@@ -186,6 +186,11 @@ export async function buchungenSchreiben(ort, neue, ergaenzen = []) {
       if (i < 0) continue;
       await patch(`N${erste + i}`, [[e.importId]]); ergaenzt++;
     }
+    for (const k of korrekturen) {
+      const i = a.indexOf(k.nr);
+      if (i < 0) continue;
+      await patch(`G${erste + i}`, [[Number(k.betrag)]]);
+    }
     // Kontrolle
     if (vergebene.length) {
       const k = await graph(W + `/worksheets('Buchungen')/range(address='A${start}:A${start + vergebene.length - 1}')?$select=values`, { headers: S });
@@ -196,4 +201,86 @@ export async function buchungenSchreiben(ort, neue, ergaenzen = []) {
   } finally {
     await graph(W + '/closeSession', { method: 'POST', headers: S }).catch(() => {});
   }
+}
+
+
+// ---------------------------------------------------------------- Einzelne Buchung ändern / löschen
+async function mitSitzung(ort, arbeit) {
+  const W = `/drives/${ort.driveId}/items/${ort.itemId}/workbook`;
+  const json = (o) => ({ ...o, headers: { 'Content-Type': 'application/json', ...(o.headers || {}) } });
+  const sitzung = await graph(W + '/createSession', json({ method: 'POST', body: JSON.stringify({ persistChanges: true }) }));
+  const S = { 'workbook-session-id': sitzung.id };
+  const api = {
+    lies: (blatt, adresse) => graph(W + `/worksheets('${blatt}')/range(address='${adresse}')?$select=values`, { headers: S }),
+    schreib: (blatt, adresse, values) => graph(W + `/worksheets('${blatt}')/range(address='${adresse}')`, json({ method: 'PATCH', headers: S, body: JSON.stringify({ values }) })),
+    tabelle: (name) => graph(W + `/tables('${name}')/range?$select=address`, { headers: S }),
+  };
+  try { return await arbeit(api); } finally { await graph(W + '/closeSession', { method: 'POST', headers: S }).catch(() => {}); }
+}
+const serialVon = (iso) => { const [y, mo, d] = iso.split('-').map(Number); return (Date.UTC(y, mo - 1, d) - Date.UTC(1899, 11, 30)) / 86400000; };
+async function zeileVon(api, nr) {
+  const t = await api.tabelle('tblBuchungen');
+  const m = t.address.match(/!([A-Z]+)(\d+):([A-Z]+)(\d+)/);
+  const erste = Number(m[2]) + 1, letzte = Number(m[4]);
+  const a = await api.lies('Buchungen', `A${erste}:A${letzte}`);
+  const i = a.values.findIndex((r) => r[0] === nr);
+  if (i < 0) throw new Error(`${nr} wurde in der Datei nicht gefunden.`);
+  return erste + i;
+}
+
+/** Ändert eine Buchung (Spalten B bis L und P). Nummer, Quelle und Import-ID bleiben. */
+export function buchungAendern(ort, nr, b) {
+  return mitSitzung(ort, async (api) => {
+    const z = await zeileVon(api, nr);
+    await api.schreib('Buchungen', `B${z}:L${z}`, [[serialVon(b.datum), serialVon(b.giltFuer + '-01'), b.art, b.von, b.nach, Number(b.betrag),
+      b.bereich || '', b.posten || '', b.topf || '', b.beschreibung || '', b.kommentar || '']]);
+    await api.schreib('Buchungen', `P${z}`, [[b.gezahltVon || '']]);
+    return z;
+  });
+}
+
+/** Löscht eine Buchung: leert A bis N und P der Zeile. Die Formeln (O, Q) bleiben für die nächste Buchung. */
+export function buchungLoeschen(ort, nr) {
+  return mitSitzung(ort, async (api) => {
+    const z = await zeileVon(api, nr);
+    await api.schreib('Buchungen', `A${z}:N${z}`, [Array(14).fill('')]);
+    await api.schreib('Buchungen', `P${z}`, [['']]);
+    return z;
+  });
+}
+
+/** Trägt den Kontostand laut Bank zum Monatsende ins Blatt „Kontostände“ ein. */
+export function kontostandEintragen(ort, monat, konto, betrag) {
+  return mitSitzung(ort, async (api) => {
+    const t = await api.tabelle('tblKontostaende');
+    const m = t.address.match(/!([A-Z]+)(\d+):([A-Z]+)(\d+)/);
+    const erste = Number(m[2]) + 1, letzte = Number(m[4]);
+    const ab = await api.lies('Kontostände', `A${erste}:B${letzte}`);
+    const ziel = serialVon(monat + '-01');
+    const i = ab.values.findIndex((r) => Math.round(Number(r[0])) === ziel && r[1] === konto);
+    if (i < 0) throw new Error(`Im Blatt „Kontostände“ gibt es keine Zeile für ${konto} im Monat ${monat}. Bitte in Excel ergänzen.`);
+    await api.schreib('Kontostände', `C${erste + i}`, [[Number(betrag)]]);
+    return erste + i;
+  });
+}
+
+// ---------------------------------------------------------------- Regeldatei neben der Excel-Datei
+export const REGELN_DATEI = 'Unser-Geld-Regeln.json';
+export async function regelnLaden(item) {
+  const d = item.parentReference?.driveId, p = item.parentReference?.id;
+  if (!d || !p) return [];
+  let t; try { t = await token(); } catch { throw new KeinNetz(); }
+  if (!t) throw new AnmeldungNoetig();
+  let r;
+  try { r = await fetch(`${GRAPH}/drives/${d}/items/${p}:/${encodeURIComponent(REGELN_DATEI)}:/content`, { headers: { Authorization: `Bearer ${t}` }, cache: 'no-store' }); }
+  catch { throw new KeinNetz(); }
+  if (r.status === 404) return [];
+  if (!r.ok) throw new Error(`Regeln konnten nicht geladen werden (${r.status})`);
+  const j = await r.json().catch(() => null);
+  return Array.isArray(j?.regeln) ? j.regeln : [];
+}
+export async function regelnSpeichern(item, regeln) {
+  const d = item.parentReference?.driveId, p = item.parentReference?.id;
+  const inhalt = JSON.stringify({ hinweis: 'Zuordnungsregeln für den CSV-Import von „Unser Geld“. Wird vom PC-Tool gepflegt.', regeln }, null, 2);
+  return graph(`/drives/${d}/items/${p}:/${encodeURIComponent(REGELN_DATEI)}:/content`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: inhalt });
 }
