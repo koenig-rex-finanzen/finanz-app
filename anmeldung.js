@@ -21,7 +21,7 @@ export async function anmelden({ konto } = {}) {
   const verifier = zufall(48);
   const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
   const state = zufall(16);
-  schreiben('ug.pkce', { verifier, state }, sessionStorage);
+  schreiben('ug.pkce', { verifier, state, hash: location.hash || '' }, sessionStorage);
   const p = new URLSearchParams({
     client_id: CONFIG.clientId, response_type: 'code', redirect_uri: rueckAdresse(), response_mode: 'query',
     scope: SCOPES, code_challenge: challenge, code_challenge_method: 'S256', state,
@@ -59,6 +59,7 @@ export async function rueckkehrVerarbeiten() {
   schreiben('ug.pkce', null, sessionStorage);
   if (!pkce || pkce.state !== q.get('state')) throw new Error('Anmeldung ungültig (Sicherheitsprüfung). Bitte noch einmal anmelden.');
   await tokenAnfrage({ grant_type: 'authorization_code', code: q.get('code'), redirect_uri: rueckAdresse(), code_verifier: pkce.verifier });
+  if (pkce.hash) history.replaceState(null, '', rueckAdresse() + pkce.hash);
   return true;
 }
 

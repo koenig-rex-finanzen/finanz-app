@@ -5,7 +5,7 @@ import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -64,6 +64,11 @@ async function start() {
         if (me) ms.kontoMerken(me.mail || me.userPrincipalName || me.displayName);
       }
     } catch (e) { fehler = e.message; }
+  }
+  if (location.hash === '#pc') {
+    const pc = await import('./pc.js');
+    await pc.starte(app);
+    return;
   }
   const gespeichert = await ladeDatei();
   if (gespeichert) {
@@ -163,8 +168,11 @@ document.addEventListener('submit', async (ev) => {
 });
 
 document.addEventListener('visibilitychange', () => {
+  if (document.body.classList.contains('pc-modus')) return;
   if (document.visibilityState === 'visible' && ms.aktiv() && ms.angemeldet() && Date.now() - z.geprueft > 5 * 60 * 1000) ausOneDrive();
 });
+
+window.addEventListener('hashchange', () => location.reload());
 
 dateiInput.addEventListener('change', async () => {
   const f = dateiInput.files?.[0];
@@ -364,6 +372,7 @@ function zeigeMenu() {
         : ms.aktiv() ? `<button class="knopf" id="anmelden">Mit Microsoft anmelden</button>` : ''}
       ${d?.webUrl ? `<a class="knopf leise" href="${h(d.webUrl)}" target="_blank" rel="noopener">In Excel öffnen</a>` : ''}
       <label class="knopf leise" for="datei">Datei vom Handy öffnen</label>
+      <a class="knopf leise" href="#pc">PC-Ansicht (Kontoauszüge importieren)</a>
       ${ms.aktiv() && ms.angemeldet() ? `<button class="knopf leise" id="abmelden">Abmelden</button>` : ''}
       <button class="knopf leise" id="entfernen">Daten von diesem Handy entfernen</button>
       <button class="knopf leise" id="schliessen">Schließen</button>
@@ -527,6 +536,7 @@ document.addEventListener('submit', async (ev) => {
 
 // ---------- Ereignisse
 document.addEventListener('click', async (ev) => {
+  if (document.body.classList.contains('pc-modus')) return;
   const t = ev.target.closest('button, [data-monat]');
   if (!t) { if (ev.target === menu) menu.close(); return; }
   if (t.dataset.monat) { z.monat = t.dataset.monat; zeichne(); window.scrollTo(0, 0); return; }

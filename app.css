@@ -230,3 +230,54 @@ dialog{max-height:92dvh;overflow-y:auto}
 .erkannt b{color:var(--warn);font-weight:600}
 @keyframes neu{from{background:var(--gem-soft)}to{background:transparent}}
 .feld.neu{animation:neu 1.4s ease-out;border-radius:10px}
+
+/* ================= PC-Ansicht ================= */
+body.pc-modus{padding-bottom:0}
+.pc{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+.pc-nav{background:var(--surface);border-right:1px solid var(--line);padding:24px 16px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh}
+.pc-logo{font-size:20px;font-weight:800;letter-spacing:-.02em;margin:0 8px 20px}
+.pc-nav>button{text-align:left;padding:10px 12px;border-radius:10px;font-weight:600;color:var(--muted)}
+.pc-nav>button.an{background:var(--gem-soft);color:var(--gem)}
+.pc-nav>button:hover:not(.an){background:var(--sunk)}
+.pc-fuss{margin-top:auto;display:grid;gap:6px;font-size:13px;padding:0 8px}
+.pc-fuss .knopf{margin-top:6px}
+.pc-inhalt{padding:28px 32px 120px;min-width:0;max-width:1500px}
+.pc-inhalt h1{font-size:28px;letter-spacing:-.02em;margin-bottom:18px}
+.pc-start{max-width:560px;margin:15vh auto;padding:0 16px;display:grid;gap:16px}
+.pc-start h1{font-size:32px;letter-spacing:-.02em}
+.ablage{display:grid;gap:6px;justify-items:center;text-align:center;padding:34px 20px;border:2px dashed var(--line);border-radius:18px;background:var(--surface);cursor:pointer;position:relative}
+.ablage.drueber{border-color:var(--gem);background:var(--gem-soft)}
+.ablage input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.karten{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-bottom:12px}
+.karte{background:var(--surface);border-radius:16px;padding:16px;display:grid;gap:10px;align-content:start}
+.karte.aus{opacity:.7}
+.k-kopf{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.abgleich{border-radius:12px;padding:12px;background:var(--sunk);font-size:14px;display:grid;gap:4px}
+.abgleich div{display:flex;justify-content:space-between}
+.abgleich.ok{background:var(--gem-soft)}
+.abgleich.warn{background:var(--warn-soft)}
+.abgleich ul{margin:4px 0 0 18px}
+.anz{display:inline-block;min-width:20px;padding:0 6px;border-radius:10px;background:var(--sunk);font-size:12px;margin-left:4px}
+.tabelle-rahmen{overflow-x:auto;background:var(--surface);border-radius:16px}
+table.umsaetze{border-collapse:collapse;width:100%;font-size:14px}
+.umsaetze th{position:sticky;top:0;background:var(--surface);text-align:left;font-size:12px;color:var(--muted);font-weight:600;padding:10px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.umsaetze td{padding:8px;border-top:1px solid var(--line);vertical-align:top}
+.umsaetze tr:not(.gewaehlt) td{opacity:.55}
+.umsaetze tr.fehlt td{background:var(--warn-soft)}
+.umsaetze .r{text-align:right}
+.umsaetze .nw{white-space:nowrap}
+.umsaetze select,.umsaetze input:not([type=checkbox]){height:34px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;font-size:13px;padding:0 6px;max-width:190px}
+.umsaetze input[data-feld=posten]{width:170px}
+.umsaetze input[data-feld=kommentar]{width:150px}
+.umsaetze .vn{display:grid;gap:4px}
+.banktext{max-width:300px;font-size:12px;color:var(--muted);overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.grund{color:var(--gem);font-weight:600;margin-top:2px}
+.ampel{display:inline-block;width:12px;height:12px;border-radius:6px;margin-top:4px}
+.ampel.sicher{background:var(--gem)}
+.ampel.pruefen{background:#D9A400}
+.ampel.unbekannt{background:var(--warn);opacity:.5;border:2px solid var(--warn)}
+.pc-leiste{position:fixed;left:240px;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:14px 32px;display:flex;justify-content:space-between;align-items:center;gap:16px;z-index:5}
+.pc-leiste.frage{background:var(--gem-soft)}
+@media (max-width:900px){.pc{grid-template-columns:1fr}.pc-nav{position:static;height:auto}.pc-leiste{left:0}}
+.filter button[aria-pressed="true"] .anz{background:rgba(255,255,255,.22);color:inherit}
+.grund{font-size:12px}

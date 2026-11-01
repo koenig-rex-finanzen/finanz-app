@@ -141,3 +141,59 @@ export async function buchungEintragen(ort, b) {
     await graph(W + '/closeSession', { method: 'POST', headers: S }).catch(() => {});
   }
 }
+
+/**
+ * Schreibt mehrere Buchungen auf einmal (CSV-Import) und ergänzt Import-IDs bei schon eingetragenen.
+ * Eine Excel-Sitzung, neue Zeilen als ein zusammenhängender Block in die ersten freien Zeilen.
+ * @param {{driveId,itemId}} ort
+ * @param {Array<object>} neue  Buchungen wie bei buchungEintragen, zusätzlich importId, quelle
+ * @param {Array<{nr:string, importId:string}>} ergaenzen
+ * @returns {Promise<{nummern:string[], ergaenzt:number}>}
+ */
+export async function buchungenSchreiben(ort, neue, ergaenzen = []) {
+  const W = `/drives/${ort.driveId}/items/${ort.itemId}/workbook`;
+  const json = (o) => ({ ...o, headers: { 'Content-Type': 'application/json', ...(o.headers || {}) } });
+  const sitzung = await graph(W + '/createSession', json({ method: 'POST', body: JSON.stringify({ persistChanges: true }) }));
+  const S = { 'workbook-session-id': sitzung.id };
+  const patch = (adresse, values) => graph(W + `/worksheets('Buchungen')/range(address='${adresse}')`, json({ method: 'PATCH', headers: S, body: JSON.stringify({ values }) }));
+  try {
+    const tab = await graph(W + "/tables('tblBuchungen')/range?$select=address", { headers: S });
+    const m = tab.address.match(/!([A-Z]+)(\d+):([A-Z]+)(\d+)/);
+    const erste = Number(m[2]) + 1, letzte = Number(m[4]);
+    const spA = await graph(W + `/worksheets('Buchungen')/range(address='A${erste}:A${letzte}')?$select=values`, { headers: S });
+    const a = spA.values.map((r) => String(r[0] ?? ''));
+    const nummern = a.filter((x) => /^B\d+$/.test(x)).map((x) => Number(x.slice(1)));
+    let naechste = (nummern.length ? Math.max(...nummern) : 0) + 1;
+    // Erste freie Zeile nach der letzten belegten
+    let letzteBelegt = -1; a.forEach((x, i) => { if (x) letzteBelegt = i; });
+    const start = erste + letzteBelegt + 1;
+    if (start + neue.length - 1 > letzte) throw new Error(`In der Tabelle „Buchungen“ sind nur noch ${letzte - start + 1} Zeilen frei. Bitte in Excel die Tabelle verlängern.`);
+    const serial = (iso) => { const [y, mo, d] = iso.split('-').map(Number); return (Date.UTC(y, mo - 1, d) - Date.UTC(1899, 11, 30)) / 86400000; };
+    const vergebene = [];
+    if (neue.length) {
+      const zeilenAN = neue.map((b) => {
+        const nr = 'B' + String(naechste++).padStart(4, '0'); vergebene.push(nr);
+        return [nr, serial(b.datum), serial(b.giltFuer + '-01'), b.art, b.von, b.nach, Number(b.betrag), b.bereich || '',
+          b.posten || '', b.topf || '', b.beschreibung || '', b.kommentar || '', b.quelle || 'CSV', b.importId || ''];
+      });
+      const ende = start + neue.length - 1;
+      await patch(`A${start}:N${ende}`, zeilenAN);
+      if (neue.some((b) => b.gezahltVon)) await patch(`P${start}:P${ende}`, neue.map((b) => [b.gezahltVon || '']));
+    }
+    let ergaenzt = 0;
+    for (const e of ergaenzen) {
+      const i = a.indexOf(e.nr);
+      if (i < 0) continue;
+      await patch(`N${erste + i}`, [[e.importId]]); ergaenzt++;
+    }
+    // Kontrolle
+    if (vergebene.length) {
+      const k = await graph(W + `/worksheets('Buchungen')/range(address='A${start}:A${start + vergebene.length - 1}')?$select=values`, { headers: S });
+      const ok = k.values.every((r, i) => r[0] === vergebene[i]);
+      if (!ok) throw new Error('Die Buchungen wurden nicht wie erwartet gespeichert. Bitte in Excel prüfen.');
+    }
+    return { nummern: vergebene, ergaenzt };
+  } finally {
+    await graph(W + '/closeSession', { method: 'POST', headers: S }).catch(() => {});
+  }
+}
