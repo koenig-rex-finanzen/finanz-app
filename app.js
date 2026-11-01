@@ -4,7 +4,7 @@ import { monatsansicht, monate, monatsname, monatPlus, eur } from './kern/rechne
 import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');

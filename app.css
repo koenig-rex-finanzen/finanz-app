@@ -20,7 +20,7 @@
 html{-webkit-text-size-adjust:100%}
 body{
   background:var(--bg); color:var(--ink);
-  font-family:"Schibsted Grotesk", system-ui, sans-serif; font-size:16px; line-height:1.45;
+  font-family:"Hanken Grotesk", system-ui, sans-serif; font-size:16px; line-height:1.45;
   padding-bottom:calc(84px + env(safe-area-inset-bottom));
 }
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
