@@ -56,6 +56,44 @@ export function toepfeStand(modell, bis) {
   });
 }
 
+/**
+ * Verlauf eines Topfs bis einschließlich `bis`: jede Buchung mit ihrer Wirkung auf den Topf
+ * und dem Stand danach. Rechnet genau wie toepfeStand(), damit der letzte Stand dort übereinstimmt.
+ * - Buchung mit diesem Topf: + wenn sie aufs Sparkonto geht, − wenn sie von dort kommt.
+ *   Berührt sie kein Sparkonto, wirkt sie nicht (wird trotzdem gezeigt).
+ * - „Sparplan (verteilt)“: Anteil nach Sparrate (Sparrate dieses Topfs / Summe aller Sparraten).
+ * Sortiert alt → neu.
+ */
+export function topfVerlauf(modell, topfName, bis) {
+  const t = modell.toepfe.find((x) => x.name === topfName);
+  if (!t) return null;
+  const sparrateSumme = summe(modell.toepfe, (x) => x.sparrate);
+  const anteil = sparrateSumme ? t.sparrate / sparrateSumme : 0;
+  const eintraege = [];
+  for (const b of modell.buchungen) {
+    if (!b.datum || b.datum > bis) continue;
+    if (b.topf === 'Sparplan (verteilt)') {
+      if (anteil) eintraege.push({ b, art: 'sparplan', roh: anteil * b.betrag, sparplan: b.betrag });
+    } else if (b.topf === t.name) {
+      const roh = (rolle(modell, b.nach) === 'Sparen' ? b.betrag : 0) - (rolle(modell, b.von) === 'Sparen' ? b.betrag : 0);
+      eintraege.push({ b, art: roh ? 'einzeln' : 'ohne', roh });
+    }
+  }
+  eintraege.sort((x, y) => x.b.datum.localeCompare(y.b.datum) || x.b.nr.localeCompare(y.b.nr));
+  let lauf = t.anfang || 0;
+  for (const e of eintraege) { lauf += e.roh; e.effekt = r2(e.roh); e.danach = r2(lauf); }
+  // Seit wann es den Topf gibt: Stichtag des Anfangsbestands, sonst die erste Buchung
+  const beginn = t.stichtag || eintraege[0]?.b.datum || null;
+  return { topf: t, anteil, beginn, anfang: t.anfang || 0, eintraege, stand: r2(lauf) };
+}
+
+/** Stand eines Topfs direkt vor einem Datum (Buchungen < `vor`), aus dem Verlauf. */
+export function topfStandVor(verlauf, vor) {
+  let s = verlauf.anfang;
+  for (const e of verlauf.eintraege) if (e.b.datum < vor) s += e.roh;
+  return r2(s);
+}
+
 /** Alle Monate, die die App anbietet. */
 export function monate(modell) {
   const s = new Set(Object.keys(modell.aufteilung));

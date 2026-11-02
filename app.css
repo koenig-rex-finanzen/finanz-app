@@ -321,3 +321,23 @@ tr.editor td{background:var(--gem-soft);padding:16px}
 .ausgleich-was{margin:4px 0 10px;font-size:16px}
 .knopf.grund-knopf{height:auto;min-height:52px;padding:10px 18px;flex-direction:column;gap:2px;border-radius:18px;text-align:center}
 .knopf.grund-knopf small{font-weight:400;font-size:13px;opacity:.8}
+
+/* Topf-Ansicht (0.8.0): Topf antippen → alle Buchungen mit Zeitraum */
+button.topf{width:100%;text-align:left;grid-template-columns:1fr auto 18px;align-items:center}
+button.topf .s{grid-column:1/-1}
+button.topf .pf{color:var(--muted);display:grid;place-items:center}
+button.topf .pf svg{width:16px;height:16px}
+button.topf:active{background:var(--sunk)}
+.topf-kopf{margin:18px 0 4px}
+.topf-kopf .gross{font-size:40px;font-weight:800;letter-spacing:-.03em;line-height:1.1;color:var(--spar);margin:2px 0 4px}
+.topf-kopf .gross.neg{color:var(--warn)}
+.topf-seite section{margin:20px 0}
+.zeitraum-wahl{margin:4px 0 8px}
+.monatskopf{display:flex;justify-content:space-between;align-items:baseline}
+.monatskopf span:last-child{font-weight:700}
+.bu .fuss{grid-column:1/-1;display:flex;justify-content:space-between;gap:12px;font-size:13px;color:var(--muted);margin-top:2px}
+.bu .danach{white-space:nowrap;margin-left:auto}
+.filter.umbruch{flex-wrap:wrap;overflow:visible}
+.bu.ohne-wirkung .betrag{color:var(--muted);text-decoration:line-through;font-weight:500}
+.topf-start{margin-top:12px;background:var(--surface);border-radius:16px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;border:1.5px dashed var(--line)}
+.topf-start .betrag{font-weight:700;white-space:nowrap}

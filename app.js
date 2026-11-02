@@ -1,11 +1,11 @@
 // Handy-App „Unser Geld“ – zeigt die gemeinsame Buchhaltung an (nur lesen).
 import { leseBuchhaltung } from './kern/lesen.js';
-import { monatsansicht, monate, monatsname, monatPlus, eur, AUSGLEICH, istAusgleich, ausgleichGrund } from './kern/rechnen.js';
+import { monatsansicht, monate, monatsname, monatPlus, monatsende, eur, AUSGLEICH, istAusgleich, ausgleichGrund, topfVerlauf, topfStandVor } from './kern/rechnen.js';
 import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -52,7 +52,8 @@ async function loescheDatei() {
 }
 
 // ---------- Zustand
-const z = { modell: null, datei: null, monat: null, tab: holen('tab') || 'uebersicht', filter: 'alle', status: null, laedt: false, geprueft: 0 };
+const z = { modell: null, datei: null, monat: null, tab: holen('tab') || 'uebersicht', filter: 'alle', status: null, laedt: false, geprueft: 0,
+  topf: null, zeitraum: '12', eigenVon: null, eigenBis: null, topfScroll: 0 };
 
 // ---------- Start
 async function start() {
@@ -70,6 +71,7 @@ async function start() {
     await pc.starte(app);
     return;
   }
+  if (history.state?.topf) { try { history.replaceState(null, ''); } catch {} }
   const gespeichert = await ladeDatei();
   if (gespeichert) {
     try { await uebernehmen(gespeichert, false); } catch (e) { fehler = 'Die gespeicherte Datei ließ sich nicht lesen: ' + e.message; }
@@ -167,6 +169,11 @@ document.addEventListener('submit', async (ev) => {
   catch (e) { if (e instanceof od.AnmeldungNoetig) ms.anmelden(); else zeigeNichtGefunden(e.message); }
 });
 
+document.addEventListener('change', (ev) => {
+  if (ev.target.id === 'topf-von') { z.eigenVon = ev.target.value; if (z.eigenBis && z.eigenBis < z.eigenVon) z.eigenBis = z.eigenVon; zeichne(); }
+  if (ev.target.id === 'topf-bis') { z.eigenBis = ev.target.value; if (z.eigenVon && z.eigenVon > z.eigenBis) z.eigenVon = z.eigenBis; zeichne(); }
+});
+
 document.addEventListener('visibilitychange', () => {
   if (document.body.classList.contains('pc-modus')) return;
   if (document.visibilityState === 'visible' && ms.aktiv() && ms.angemeldet() && Date.now() - z.geprueft > 5 * 60 * 1000) ausOneDrive();
@@ -189,6 +196,8 @@ dateiInput.addEventListener('change', async () => {
 
 // ---------- Zeichnen
 function zeichne() {
+  if (z.topf && !z.modell.toepfe.some((t) => t.name === z.topf)) z.topf = null;
+  if (z.topf) { zeichneTopf(); return; }
   const v = monatsansicht(z.modell, z.monat, heute());
   const liste = monate(z.modell);
   const i = liste.indexOf(z.monat);
@@ -332,10 +341,133 @@ function toepfe(v) {
     </div>
     <p class="hint" style="margin-top:10px">Stand ${v.laufend ? 'heute' : `Ende ${h(v.name)}`}, laut Buchungen. Sparraten zusammen ${eur(v.toepfe.reduce((s, t) => s + t.sparrate, 0))} im Monat.</p>
     ${[...gruppen].map(([bereich, liste]) => `<div class="gruppe">${h(bereich || 'Ohne Bereich')}</div><div class="toepfe">${liste.map((t) =>
-      `<div class="topf ${t.stand < 0 ? 'minus' : ''}"><span class="n">${h(t.name)}</span><span class="b">${eur(t.stand)}</span>
-        <span class="s" style="grid-column:1/-1">${t.sparrate ? `${eur(t.sparrate)} im Monat` : 'keine feste Sparrate'}${t.bemerkung ? '. ' + h(t.bemerkung) : ''}</span></div>`).join('')}</div>`).join('')}
+      `<button class="topf ${t.stand < 0 ? 'minus' : ''}" data-topf="${h(t.name)}" aria-label="${h(t.name)}: alle Buchungen ansehen"><span class="n">${h(t.name)}</span><span class="b">${eur(t.stand)}</span><span class="pf">${ICON.rechts}</span>
+        <span class="s">${t.sparrate ? `${eur(t.sparrate)} im Monat` : 'keine feste Sparrate'}${t.bemerkung ? '. ' + h(t.bemerkung) : ''}</span></button>`).join('')}</div>`).join('')}
+    <p class="hint" style="margin-top:12px">Topf antippen zeigt alle Buchungen dieses Topfs.</p>
   </section>`;
 }
+
+const datumLang = (iso) => (iso ? iso.split('-').reverse().join('.') : '');
+/** Detail-Zeilen einer Buchung (aufgeklappt). `extra` kommt vorne dazu. */
+function details(b, extra = []) {
+  return [...extra, ['Nummer', b.nr], ['Bezahlt am', datumLang(b.datum)], ['Gilt für', b.giltFuer ? monatsname(b.giltFuer, true) : ''],
+    ['Art', b.art], ['Bereich', b.bereich], ['Topf', b.topf], ['Verwendungszweck', b.beschreibung], ['Kommentar', b.kommentar],
+    ['Gezahlt von', istAusgleich(b) ? null : b.gezahltVon], ['Ausgleich', istAusgleich(b) ? ausgleichGrund(b) + ', wird nicht angerechnet' : null], ['Eingetragen', b.quelle === 'CSV' ? 'aus dem Bank-Export' : b.quelle]]
+    .filter(([, w]) => w).map(([k, w]) => `<dt>${k}</dt><dd>${h(w)}</dd>`).join('');
+}
+
+// ---------- Ein Topf: alle Buchungen mit Zeitraum-Filter
+const ZEITRAEUME = [['3', '3 Monate'], ['12', '12 Monate'], ['alles', 'Seit Beginn'], ['eigen', 'Zeitraum wählen']];
+/** Bis wann der Topf gezeigt wird: wie im Reiter Töpfe (heute im laufenden Monat, sonst Monatsende). */
+function topfBis() {
+  const h0 = heute();
+  return h0.slice(0, 7) === z.monat ? h0 : monatsende(z.monat);
+}
+function zeichneTopf() {
+  const bis = topfBis();
+  const vl = topfVerlauf(z.modell, z.topf, bis);
+  const t = vl.topf;
+  const bisMonat = bis.slice(0, 7);
+  const startMonat = (vl.beginn || bis).slice(0, 7);
+  // Zeitraum in Monaten [von, bisM]
+  let von, bisM = bisMonat;
+  if (z.zeitraum === 'alles') von = startMonat;
+  else if (z.zeitraum === 'eigen') {
+    von = z.eigenVon || monatPlus(bisMonat, -11);
+    bisM = z.eigenBis || bisMonat;
+    if (bisM > bisMonat) bisM = bisMonat;
+    if (von > bisM) von = bisM;
+  } else von = monatPlus(bisMonat, -(Number(z.zeitraum) - 1));
+  const abgeschnitten = von <= startMonat;
+  if (von < startMonat) von = startMonat;
+  const vonDatum = abgeschnitten && vl.beginn ? vl.beginn : von + '-01';
+  const bisDatum = bisM === bisMonat ? bis : monatsende(bisM);
+  const imZeitraum = vl.eintraege.filter((e) => (abgeschnitten || e.b.datum >= vonDatum) && e.b.datum <= bisDatum);
+  const standAnfang = abgeschnitten ? vl.anfang : topfStandVor(vl, vonDatum);
+  const standEnde = imZeitraum.length ? imZeitraum[imZeitraum.length - 1].danach : standAnfang;
+  const rein = imZeitraum.reduce((s, e) => s + Math.max(0, e.effekt), 0);
+  const raus = imZeitraum.reduce((s, e) => s + Math.min(0, e.effekt), 0);
+
+  // Monatsauswahl für „Zeitraum wählen“
+  const alleMonate = [];
+  for (let m = startMonat; m <= bisMonat; m = monatPlus(m, 1)) alleMonate.push(m);
+  const monatOpt = (wert) => alleMonate.map((m) => `<option value="${m}" ${m === wert ? 'selected' : ''}>${monatsname(m, true)}</option>`).join('');
+
+  // Liste: neu → alt, nach Monat gruppiert
+  const gruppen = new Map();
+  for (const e of [...imZeitraum].reverse()) {
+    const m = e.b.datum.slice(0, 7);
+    if (!gruppen.has(m)) gruppen.set(m, []);
+    gruppen.get(m).push(e);
+  }
+  const zeileHtml = (e) => {
+    const b = e.b;
+    const titel = e.art === 'sparplan' ? 'Sparrate (Anteil)' : (b.posten || b.beschreibung);
+    const sub = e.art === 'sparplan' ? `Anteil an ${eur(e.sparplan)} ${h(b.posten || 'Sparraten')}`
+      : e.art === 'ohne' ? 'betrifft das Tagesgeld nicht, zählt nicht für den Topf' : '';
+    const extra = e.art === 'sparplan'
+      ? [['Für diesen Topf', `${eur(e.effekt)} = ${(vl.anteil * 100).toLocaleString('de-DE', { maximumFractionDigits: 1 })} % von ${eur(e.sparplan)}. So groß ist der Anteil dieses Topfs an allen Sparraten (${eur(t.sparrate)} von ${eur(t.sparrate / vl.anteil)} im Monat).`]]
+      : [['Für diesen Topf', e.art === 'ohne' ? 'zählt nicht (kein Sparkonto beteiligt)' : vorzeichen(e.effekt)]];
+    return `<button class="bu ${e.art === 'ohne' ? 'ohne-wirkung' : ''}" aria-expanded="false"><span class="t">${h(titel)}${istAusgleich(b) ? ' <span class="chip ausgleich">Ausgleich</span>' : ''}</span>
+      <span class="betrag ${e.effekt > 0 ? 'plus' : ''}">${e.art === 'ohne' ? eur(b.betrag) : vorzeichen(e.effekt)}</span>
+      <span class="r">${datumKurz(b.datum)} <span class="chip ${kontoFarbe(b.von)}">${h(b.von)}</span>${ICON.pfeil}<span class="chip ${kontoFarbe(b.nach)}">${h(b.nach)}</span></span>
+      <span class="fuss"><span>${sub}</span><span class="danach">danach ${eur(e.danach)}</span></span>
+      <span class="more"><dl>${details(b, extra)}</dl></span></button>`;
+  };
+  const liste = imZeitraum.length ? [...gruppen].map(([m, es]) => {
+    const s = es.reduce((x, e) => x + e.effekt, 0);
+    return `<div class="gruppe monatskopf"><span>${monatsname(m, true)}</span><span class="${s > 0.004 ? 'plus' : ''}">${Math.abs(s) < 0.005 ? '±0,00 €' : vorzeichen(Math.round(s * 100) / 100)}</span></div>
+      <div class="buchungen">${es.map(zeileHtml).join('')}</div>`;
+  }).join('') : `<div class="leer">In diesem Zeitraum gibt es keine Buchungen für diesen Topf.</div>`;
+
+  const startZeile = `<div class="topf-start"><div><div style="font-weight:600">${abgeschnitten ? 'Anfangsbestand' : 'Stand davor'}</div>
+      <div class="hint">${abgeschnitten ? (vl.beginn ? `am ${datumLang(vl.beginn)}, ab da wird gebucht` : 'ab da wird gebucht') : `am ${datumLang(vorTag(vonDatum))}`}</div></div>
+    <div class="betrag">${eur(standAnfang)}</div></div>`;
+
+  app.innerHTML = `
+  <header><div class="wrap"><div class="monat">
+    <button id="topf-zurueck" aria-label="Zurück zu den Töpfen">${ICON.links}</button>
+    <div class="mitte"><h1>${h(t.name)}</h1><small>${h(t.bereich || 'Topf')} · ${h(t.konto || 'Tagesgeld')}</small></div>
+    <span style="width:40px"></span>
+  </div></div></header>
+  <main class="wrap topf-seite">
+    ${z.status ? `<div class="hinweis ${z.status.art}">${h(z.status.text)}${z.status.knopf ? ` <button class="link" id="${z.status.knopf[0]}">${h(z.status.knopf[1])}</button>` : ''}</div>` : ''}
+    <div class="topf-kopf">
+      <div class="hint">Stand ${bis === heute() ? 'heute' : 'am ' + datumLang(bis)}</div>
+      <div class="gross ${vl.stand < 0 ? 'neg' : ''}">${eur(vl.stand)}</div>
+      <div class="hint">${t.sparrate ? `Sparrate ${eur(t.sparrate)} im Monat` : 'keine feste Sparrate'}${t.bedarf ? ` · Bedarf ${eur(t.bedarf)} im Monat` : ''}</div>
+      ${t.bemerkung ? `<p class="hint" style="margin-top:6px">${h(t.bemerkung)}</p>` : ''}
+    </div>
+    <section>
+      <div class="filter umbruch" role="group" aria-label="Zeitraum">${ZEITRAEUME.map(([id, name]) => `<button aria-pressed="${z.zeitraum === id}" data-zeitraum="${id}">${name}</button>`).join('')}</div>
+      ${z.zeitraum === 'eigen' ? `<div class="zwei zeitraum-wahl">
+        <label class="feld"><span>Von</span><select id="topf-von">${monatOpt(von)}</select></label>
+        <label class="feld"><span>Bis</span><select id="topf-bis">${monatOpt(bisM)}</select></label></div>` : ''}
+      <p class="hint" style="margin:4px 0 12px">${abgeschnitten ? `Alles seit Beginn des Topfs${vl.beginn ? ` (${datumLang(vl.beginn)})` : ''}` : `${monatsname(von, true)}`}${bisM !== von || abgeschnitten ? ` bis ${bisM === bisMonat ? (bis === heute() ? 'heute' : datumLang(bis)) : monatsname(bisM, true)}` : ''}. ${imZeitraum.length} ${imZeitraum.length === 1 ? 'Buchung' : 'Buchungen'}.</p>
+      <div class="topfsumme">
+        <div class="z"><span>${abgeschnitten ? 'Anfangsbestand' : 'Stand am Anfang'}</span><b>${eur(standAnfang)}</b></div>
+        <div class="z"><span>Hinein</span><b class="plus">${vorzeichen(Math.round(rein * 100) / 100)}</b></div>
+        <div class="z"><span>Heraus</span><b>${eur(Math.round(raus * 100) / 100)}</b></div>
+        <div class="z"><span>Stand am Ende</span><b>${eur(standEnde)}</b></div>
+      </div>
+    </section>
+    <section>${liste}${startZeile}
+      ${imZeitraum.length ? '<p class="hint" style="margin-top:10px">Antippen zeigt Details und Kommentar. „danach“ ist der Stand des Topfs nach der Buchung.</p>' : ''}</section>
+  </main>`;
+}
+const vorTag = (iso) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); };
+
+function oeffneTopf(name) {
+  z.topfScroll = window.scrollY;
+  z.topf = name;
+  try { history.pushState({ topf: name }, ''); } catch {}
+  zeichne(); window.scrollTo(0, 0);
+}
+function schliesseTopf() {
+  z.topf = null; zeichne();
+  window.scrollTo(0, z.topfScroll || 0);
+}
+window.addEventListener('popstate', () => { if (z.topf && !history.state?.topf) schliesseTopf(); });
 
 function buchungen(v) {
   const liste = v.buchungen.filter((b) => z.filter === 'alle' || b.art === z.filter);
@@ -345,10 +477,7 @@ function buchungen(v) {
     ${liste.length ? `<div class="buchungen">${liste.map((b) => {
       const sign = b.art === 'Einnahme' ? '+' : b.art === 'Ausgabe' ? '−' : '';
       const andererMonat = b.giltFuer && b.giltFuer !== v.monat;
-      const dl = [['Nummer', b.nr], ['Bezahlt am', b.datum ? b.datum.split('-').reverse().join('.') : ''], ['Gilt für', b.giltFuer ? monatsname(b.giltFuer, true) : ''],
-        ['Art', b.art], ['Bereich', b.bereich], ['Topf', b.topf], ['Verwendungszweck', b.beschreibung], ['Kommentar', b.kommentar],
-        ['Gezahlt von', istAusgleich(b) ? null : b.gezahltVon], ['Ausgleich', istAusgleich(b) ? ausgleichGrund(b) + ', wird nicht angerechnet' : null], ['Eingetragen', b.quelle === 'CSV' ? 'aus dem Bank-Export' : b.quelle]]
-        .filter(([, w]) => w).map(([k, w]) => `<dt>${k}</dt><dd>${h(w)}</dd>`).join('');
+      const dl = details(b);
       const aktion = kannEintragen() ? `<div class="bu-aktion">${istAusgleich(b)
         ? `<button class="knopf leise klein" data-ausgleich="" data-nr="${h(b.nr)}">Ausgleich aufheben, wieder anrechnen</button>`
         : `<button class="knopf leise klein" data-ausgleich-frage="${h(b.nr)}">Als Ausgleich markieren</button>`}</div>` : '';
@@ -597,6 +726,12 @@ document.addEventListener('click', async (ev) => {
   if (t.dataset.monat) { z.monat = t.dataset.monat; zeichne(); window.scrollTo(0, 0); return; }
   if (t.dataset.tab) { z.tab = t.dataset.tab; merken('tab', z.tab); zeichne(); window.scrollTo(0, 0); return; }
   if (t.dataset.filter) { z.filter = t.dataset.filter; zeichne(); return; }
+  if (t.dataset.topf) { oeffneTopf(t.dataset.topf); return; }
+  if (t.id === 'topf-zurueck') { if (history.state?.topf) history.back(); else schliesseTopf(); return; }
+  if (t.dataset.zeitraum) {
+    if (t.dataset.zeitraum === 'eigen' && z.zeitraum !== 'eigen') { z.eigenVon = null; z.eigenBis = null; }
+    z.zeitraum = t.dataset.zeitraum; zeichne(); return;
+  }
   if (t.dataset.ausgleichFrage) { zeigeAusgleichFrage(t.dataset.ausgleichFrage); return; }
   if (t.dataset.ausgleich != null && t.dataset.nr) { ausgleichSetzen(t.dataset.nr, t.dataset.ausgleich, t); return; }
   if (t.classList.contains('bu')) { t.setAttribute('aria-expanded', t.getAttribute('aria-expanded') === 'true' ? 'false' : 'true'); return; }
