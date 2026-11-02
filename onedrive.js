@@ -239,6 +239,17 @@ export function buchungAendern(ort, nr, b) {
   });
 }
 
+/** Setzt nur „Gezahlt von“ (Spalte P) einer Buchung, z. B. „Ausgleich: aus Topf“ oder leer. Alles andere bleibt. */
+export function gezahltVonSetzen(ort, nr, wert) {
+  return mitSitzung(ort, async (api) => {
+    const z = await zeileVon(api, nr);
+    await api.schreib('Buchungen', `P${z}`, [[wert || '']]);
+    const k = await api.lies('Buchungen', `A${z}:P${z}`);
+    if (k?.values?.[0]?.[0] !== nr || String(k.values[0][15] ?? '') !== String(wert || '')) throw new Error('Die Änderung wurde nicht wie erwartet gespeichert. Bitte in Excel prüfen.');
+    return z;
+  });
+}
+
 /** Löscht eine Buchung: leert A bis N und P der Zeile. Die Formeln (O, Q) bleiben für die nächste Buchung. */
 export function buchungLoeschen(ort, nr) {
   return mitSitzung(ort, async (api) => {

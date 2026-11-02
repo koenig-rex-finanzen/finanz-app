@@ -1,7 +1,7 @@
 // PC-Ansicht „Unser Geld“ (…/finanz-app/#pc): Kontoauszüge abgleichen und importieren,
 // Monatsabschluss, Buchungsliste mit Bearbeiten, Zuordnungsregeln.
 import { leseBuchhaltung } from './kern/lesen.js';
-import { eur, monatsname, monatsansicht, monate, monatsende, monatPlus } from './kern/rechnen.js';
+import { eur, monatsname, monatsansicht, monate, monatsende, monatPlus, AUSGLEICH, istAusgleich } from './kern/rechnen.js';
 import { analysieren, csvText, kurzname } from './kern/csv.js';
 import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
@@ -330,7 +330,7 @@ function buchungenAnsicht() {
     <p class="hint">${liste.length} Buchungen${z.bKonto ? `, Saldo auf ${h(z.bKonto)}: ${eur(summe(z.bKonto))}` : ''}. Zum Bearbeiten eine Zeile anklicken.</p>
     <div class="tabelle-rahmen"><table class="umsaetze buchliste"><thead><tr><th>Nr</th><th>Datum</th><th>Gilt für</th><th>Art</th><th>Von → Nach</th><th class="r">Betrag</th><th>Wofür</th><th>Bereich</th><th>Topf</th><th>Kommentar</th><th>Quelle</th></tr></thead><tbody>
     ${liste.map((b) => z.bearbeiten === b.nr ? editor(b) : `<tr class="gewaehlt klickbar" data-nr="${h(b.nr)}"><td>${h(b.nr)}</td><td class="nw">${datum(b.datum)}</td><td class="nw">${b.giltFuer ? monatsname(b.giltFuer).slice(0, 3) + ' ' + b.giltFuer.slice(2, 4) : ''}</td>
-      <td>${h(b.art)}</td><td class="nw">${h(b.von)} → ${h(b.nach)}</td><td class="r nw">${eur(b.betrag)}</td><td>${h(b.posten)}</td><td>${h(b.bereich)}</td><td>${h(b.topf)}</td>
+      <td>${h(b.art)}</td><td class="nw">${h(b.von)} → ${h(b.nach)}</td><td class="r nw">${eur(b.betrag)}</td><td>${h(b.posten)}${istAusgleich(b) ? ' <span class="chip ausgleich">Ausgleich</span>' : ''}</td><td>${h(b.bereich)}</td><td>${h(b.topf)}</td>
       <td class="hint">${h(b.kommentar)}</td><td class="hint">${b.quelle === 'CSV' ? 'Auszug' : 'von Hand'}${b.importId ? ' ✓' : ''}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
@@ -350,7 +350,7 @@ function editor(b) {
       ${f('Wofür', `<input name="posten" value="${h(b.posten)}">`)}
       ${f('Bereich', `<select name="bereich">${opts(m.listen?.bereiche || [], b.bereich, '–')}</select>`)}
       ${f('Topf', `<select name="topf">${opts(toepfeListe(), b.topf, '–')}</select>`)}
-      ${f('Gezahlt von', `<select name="gezahltVon">${opts(['Kai', 'Natalie'], b.gezahltVon, '–')}</select>`)}
+      ${f('Gezahlt von / Ausgleich', `<select name="gezahltVon">${opts(['Kai', 'Natalie', AUSGLEICH.topf, AUSGLEICH.korrektur], b.gezahltVon, '–')}</select>`)}
       ${f('Verwendungszweck', `<input name="beschreibung" value="${h(b.beschreibung)}">`)}
       ${f('Kommentar', `<input name="kommentar" value="${h(b.kommentar)}">`)}
     </div>

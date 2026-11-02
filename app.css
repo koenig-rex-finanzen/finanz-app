@@ -302,3 +302,22 @@ tr.editor td{background:var(--gem-soft);padding:16px}
 .editor-felder .feld input,.editor-felder .feld select{height:40px;font-size:14px;background:var(--surface)}
 .editor-knoepfe{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
 .umsaetze button.link{color:var(--gem);font-weight:600;text-decoration:underline;font-size:13px;white-space:nowrap}
+
+/* Ausgleich (0.7.0): Buchung zählt nicht als Einzahlung */
+[hidden]{display:none!important}
+.chip.ausgleich{background:var(--warn-soft);color:var(--warn);font-size:12px;font-weight:600;vertical-align:2px;margin-left:4px}
+.ausgleich-hinweis{margin-top:10px;padding:10px 12px;border-radius:12px;background:var(--warn-soft);color:var(--ink)}
+.bu-wrap{border-top:1px solid var(--line)}
+.bu-wrap:first-child{border-top:0}
+.bu-wrap .bu{border-top:0}
+.bu-aktion{display:none;padding:0 16px 14px}
+.bu[aria-expanded="true"]+.bu-aktion{display:flex}
+.ausgleich-feld{display:grid;gap:8px;padding:12px;border-radius:12px;background:var(--sunk)}
+.ausgleich-feld label{display:flex;gap:12px;align-items:flex-start;cursor:pointer}
+.ausgleich-feld input{width:22px;height:22px;margin:1px 0 0;flex:none;accent-color:var(--gem)}
+.ausgleich-feld span{display:grid;gap:2px;font-size:15px;color:var(--ink)}
+.ausgleich-feld small{font-size:13px;color:var(--muted)}
+.ausgleich-feld .grund{display:grid;gap:8px;padding:10px 0 2px 34px}
+.ausgleich-was{margin:4px 0 10px;font-size:16px}
+.knopf.grund-knopf{height:auto;min-height:52px;padding:10px 18px;flex-direction:column;gap:2px;border-radius:18px;text-align:center}
+.knopf.grund-knopf small{font-weight:400;font-size:13px;opacity:.8}

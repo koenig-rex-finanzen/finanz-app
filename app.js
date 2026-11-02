@@ -1,11 +1,11 @@
 // Handy-App „Unser Geld“ – zeigt die gemeinsame Buchhaltung an (nur lesen).
 import { leseBuchhaltung } from './kern/lesen.js';
-import { monatsansicht, monate, monatsname, monatPlus, eur } from './kern/rechnen.js';
+import { monatsansicht, monate, monatsname, monatPlus, eur, AUSGLEICH, istAusgleich, ausgleichGrund } from './kern/rechnen.js';
 import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -265,6 +265,7 @@ function uebersicht(v) {
       <div><div class="route">${h(u.person)} an ${h(u.nach)}</div><div class="bis">${h(u.hinweis || u.wann)}</div></div>
       <div class="betrag">${eur(u.betrag)}</div>${status}</div>`;
   }).join('')}</div>
+  ${v.ausgleich.length ? `<p class="hint ausgleich-hinweis">Außerdem eingegangen: ${v.ausgleich.map((b) => `${eur(b.betrag)} ${h(b.posten || '')} (${h(b.grund)})`).join(', ')}. Zählt als Ausgleich, nicht als Überweisung.</p>` : ''}
   ${v.anteil ? `<div class="anteil">
     <div class="hint">So teilt ihr euch die Kosten im ${h(v.name)}, nach Einkommen</div>
     <div class="anteilbar" aria-hidden="true"><span style="flex:${v.anteil.anteilKai};background:var(--kai)"></span><span style="flex:${v.anteil.anteilNatalie};background:var(--nat)"></span></div>
@@ -346,11 +347,14 @@ function buchungen(v) {
       const andererMonat = b.giltFuer && b.giltFuer !== v.monat;
       const dl = [['Nummer', b.nr], ['Bezahlt am', b.datum ? b.datum.split('-').reverse().join('.') : ''], ['Gilt für', b.giltFuer ? monatsname(b.giltFuer, true) : ''],
         ['Art', b.art], ['Bereich', b.bereich], ['Topf', b.topf], ['Verwendungszweck', b.beschreibung], ['Kommentar', b.kommentar],
-        ['Gezahlt von', b.gezahltVon], ['Eingetragen', b.quelle === 'CSV' ? 'aus dem Bank-Export' : b.quelle]]
+        ['Gezahlt von', istAusgleich(b) ? null : b.gezahltVon], ['Ausgleich', istAusgleich(b) ? ausgleichGrund(b) + ', wird nicht angerechnet' : null], ['Eingetragen', b.quelle === 'CSV' ? 'aus dem Bank-Export' : b.quelle]]
         .filter(([, w]) => w).map(([k, w]) => `<dt>${k}</dt><dd>${h(w)}</dd>`).join('');
-      return `<button class="bu" aria-expanded="false"><span class="t">${h(b.posten || b.beschreibung)}</span><span class="betrag ${b.art === 'Einnahme' ? 'plus' : ''}">${sign}${eur(b.betrag)}</span>
+      const aktion = kannEintragen() ? `<div class="bu-aktion">${istAusgleich(b)
+        ? `<button class="knopf leise klein" data-ausgleich="" data-nr="${h(b.nr)}">Ausgleich aufheben, wieder anrechnen</button>`
+        : `<button class="knopf leise klein" data-ausgleich-frage="${h(b.nr)}">Als Ausgleich markieren</button>`}</div>` : '';
+      return `<div class="bu-wrap"><button class="bu" aria-expanded="false"><span class="t">${h(b.posten || b.beschreibung)}${istAusgleich(b) ? ' <span class="chip ausgleich">Ausgleich</span>' : ''}</span><span class="betrag ${b.art === 'Einnahme' ? 'plus' : ''}">${sign}${eur(b.betrag)}</span>
         <span class="r">${datumKurz(b.datum)} <span class="chip ${kontoFarbe(b.von)}">${h(b.von)}</span>${ICON.pfeil}<span class="chip ${kontoFarbe(b.nach)}">${h(b.nach)}</span>${andererMonat ? `<span class="okt">gilt für ${h(monatsname(b.giltFuer))}</span>` : ''}</span>
-        <span class="more"><dl>${dl}</dl></span></button>`;
+        <span class="more"><dl>${dl}</dl></span></button>${aktion}</div>`;
     }).join('')}</div><p class="hint" style="margin-top:10px">Antippen zeigt Details und Kommentar.</p>`
       : `<div class="leer">${z.filter === 'alle' ? `Für ${h(v.name)} ist noch nichts gebucht.` : 'Keine Buchungen dieser Art in diesem Monat.'}</div>`}
   </section>`;
@@ -410,6 +414,8 @@ function zeigeEintragen(fehler, vorher) {
   const toepfe = ['Sparplan (verteilt)', ...m.toepfe.map((t) => t.name)];
   const postenListe = [...new Set([...m.kosten.map((k) => k.posten), ...m.einnahmen.map((e) => e.posten), ...m.buchungen.map((b) => b.posten)].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
   const v = vorher || { art: 'Ausgabe', datum: h0, giltFuer: z.monat && z.monat >= vormonat ? (h0.slice(0, 7) === z.monat ? z.monat : z.monat) : h0.slice(0, 7), ...STANDARD.Ausgabe(kn), bereich: '', topf: '', posten: '', betrag: '', beschreibung: '', kommentar: '', gezahltVon: '' };
+  const ausgleichAn = v.ausgleich === 'on' || istAusgleich(v);
+  const grund = v.grund || (istAusgleich(v) ? (/topf/i.test(v.gezahltVon) ? 'topf' : 'korrektur') : '');
   const opt = (liste, wert, leer) => (leer ? `<option value="">${leer}</option>` : '') + liste.map((x) => `<option value="${h(x)}" ${x === wert ? 'selected' : ''}>${h(x)}</option>`).join('');
   menu.innerHTML = `<form id="eintragen-form" novalidate>
     <h2 id="menu-titel">Buchung eintragen</h2>
@@ -436,7 +442,14 @@ function zeigeEintragen(fehler, vorher) {
     <label class="feld"><span>Topf <small>(nur wenn Geld aufs Tagesgeld geht oder von dort kommt)</small></span><select name="topf">${opt(toepfe, v.topf, 'kein Topf')}</select></label>
     <label class="feld"><span>Verwendungszweck <small>(optional)</small></span><input name="beschreibung" autocomplete="off" value="${h(v.beschreibung)}"></label>
     <label class="feld"><span>Kommentar <small>(optional)</small></span><input name="kommentar" autocomplete="off" value="${h(v.kommentar)}"></label>
-    <label class="feld"><span>Gezahlt von <small>(nur wenn es nicht vom eigenen Konto kommt, z. B. Elterngeld)</small></span><select name="gezahltVon">${opt(['Kai', 'Natalie'], v.gezahltVon, '–')}</select></label>
+    <label class="feld" id="gezahlt-feld" ${ausgleichAn ? 'hidden' : ''}><span>Gezahlt von <small>(nur wenn es nicht vom eigenen Konto kommt, z. B. Elterngeld)</small></span><select name="gezahltVon">${opt(['Kai', 'Natalie'], istAusgleich(v) ? '' : v.gezahltVon, '–')}</select></label>
+    <div class="ausgleich-feld">
+      <label class="haken"><input type="checkbox" name="ausgleich" ${ausgleichAn ? 'checked' : ''}><span><b>Ausgleich, nicht anrechnen</b><small>Die Buchung bleibt sichtbar, zählt aber nicht als Einzahlung.</small></span></label>
+      <div class="grund" id="grund" ${ausgleichAn ? '' : 'hidden'} role="radiogroup" aria-label="Grund">
+        <label><input type="radio" name="grund" value="topf" ${grund === 'topf' ? 'checked' : ''}><span><b>Aus Topf weitergeleitet</b><small>Geld kam aus einem Topf und lief nur übers eigene Konto</small></span></label>
+        <label><input type="radio" name="grund" value="korrektur" ${grund === 'korrektur' ? 'checked' : ''}><span><b>Falsch bezahlt / Korrektur</b><small>Mit der falschen Karte bezahlt, oder die Rücküberweisung dazu</small></span></label>
+      </div>
+    </div>
     <p class="zusammen" id="zusammen"></p>
     ${fehler ? `<p class="fehler">${h(fehler)}</p>` : ''}
     <div class="knoepfe"><button class="knopf" type="submit" id="eintragen-los">Eintragen</button><button class="knopf leise" type="button" id="schliessen">Abbrechen</button></div>
@@ -446,11 +459,15 @@ function zeigeEintragen(fehler, vorher) {
     const d = Object.fromEntries(new FormData(form));
     const b = betragLesen(d.betrag);
     document.getElementById('zusammen').textContent = isFinite(b) && b > 0
-      ? `${d.art} über ${eur(b)} von ${d.von} an ${d.nach}, gilt für ${monatsname(d.giltFuer)}.` : '';
+      ? `${d.art} über ${eur(b)} von ${d.von} an ${d.nach}, gilt für ${monatsname(d.giltFuer)}.${d.ausgleich ? ' Ausgleich, wird nicht angerechnet.' : ''}` : '';
   };
   form.addEventListener('input', zusammen);
   form.addEventListener('change', (ev) => {
     if (ev.target.name === 'art') { const s = STANDARD[ev.target.value](kn); form.von.value = s.von; form.nach.value = s.nach; zusammen(); }
+    if (ev.target.name === 'ausgleich') {
+      document.getElementById('grund').hidden = !ev.target.checked;
+      document.getElementById('gezahlt-feld').hidden = ev.target.checked;
+    }
     if (ev.target.name === 'datum' && ev.target.value) { const mo = ev.target.value.slice(0, 7); if ([...form.giltFuer.options].some((o) => o.value === mo)) form.giltFuer.value = mo; zusammen(); }
   });
   zusammen();
@@ -515,12 +532,14 @@ document.addEventListener('submit', async (ev) => {
     : !d.posten.trim() ? 'Bitte eintragen, wofür das Geld war.'
       : !d.datum ? 'Bitte das Datum angeben.'
         : d.von === d.nach ? 'Von und Nach sind dasselbe Konto.'
-          : !d.bereich ? 'Bitte einen Bereich wählen.' : null;
+          : !d.bereich ? 'Bitte einen Bereich wählen.'
+            : d.ausgleich && !d.grund ? 'Bitte beim Ausgleich den Grund wählen.' : null;
   if (fehler) { zeigeEintragen(fehler, d); return; }
   const knopf = document.getElementById('eintragen-los');
   knopf.disabled = true; knopf.textContent = 'Wird eingetragen …';
   try {
-    const { nr } = await od.buchungEintragen(od.aktuellerOrt(), { ...d, betrag, posten: d.posten.trim() });
+    const gezahltVon = d.ausgleich ? AUSGLEICH[d.grund] : d.gezahltVon;
+    const { nr } = await od.buchungEintragen(od.aktuellerOrt(), { ...d, gezahltVon, betrag, posten: d.posten.trim() });
     menu.close();
     z.status = { art: 'info', text: `${nr} eingetragen: ${d.posten.trim()}, ${eur(betrag)}.` };
     zeichne();
@@ -534,6 +553,42 @@ document.addEventListener('submit', async (ev) => {
   }
 });
 
+// ---------- Ausgleich an bestehender Buchung setzen oder aufheben
+function zeigeAusgleichFrage(nr, fehler) {
+  const b = z.modell.buchungen.find((x) => x.nr === nr);
+  if (!b) return;
+  menu.innerHTML = `<h2 id="menu-titel">Als Ausgleich markieren</h2>
+    <p class="ausgleich-was"><b>${h(b.posten || b.beschreibung)}</b>, ${eur(b.betrag)}<br><span class="hint">${datumKurz(b.datum)} ${h(b.von)} → ${h(b.nach)}</span></p>
+    <p class="hint">Die Buchung bleibt, wie sie ist, und zählt weiter bei den Kontoständen. Sie wird nur nicht mehr als Einzahlung angerechnet.</p>
+    ${fehler ? `<p class="fehler">${h(fehler)}</p>` : ''}
+    <div class="knoepfe">
+      <button class="knopf grund-knopf" data-ausgleich="topf" data-nr="${h(nr)}"><b>Aus Topf weitergeleitet</b><small>Geld kam aus einem Topf und lief nur übers eigene Konto</small></button>
+      <button class="knopf grund-knopf" data-ausgleich="korrektur" data-nr="${h(nr)}"><b>Falsch bezahlt / Korrektur</b><small>Mit der falschen Karte bezahlt, oder die Rücküberweisung dazu</small></button>
+      <button class="knopf leise" id="schliessen">Abbrechen</button>
+    </div>`;
+  if (!menu.open) menu.showModal();
+}
+async function ausgleichSetzen(nr, grund, knopf) {
+  const b = z.modell.buchungen.find((x) => x.nr === nr);
+  if (!b) return;
+  const wert = grund ? AUSGLEICH[grund] : '';
+  if (knopf) { knopf.disabled = true; knopf.textContent = 'Wird gespeichert …'; }
+  const text = grund ? `${nr} ist jetzt ein Ausgleich und wird nicht angerechnet.` : `${nr} wird wieder angerechnet.`;
+  try {
+    await od.gezahltVonSetzen(od.aktuellerOrt(), nr, wert);
+    if (menu.open) menu.close();
+    z.status = { art: 'info', text }; zeichne();
+    await ausOneDrive({ immer: true });
+    z.status = { art: 'info', text }; zeichne();
+  } catch (e) {
+    const msg = e instanceof od.AnmeldungNoetig ? 'Die Anmeldung ist abgelaufen. Bitte im Menü neu anmelden.'
+      : e instanceof od.KeinNetz ? 'Gerade keine Verbindung zu OneDrive. Es wurde nichts geändert.'
+        : 'Das hat nicht geklappt: ' + e.message;
+    if (grund) zeigeAusgleichFrage(nr, msg);
+    else { z.status = { art: 'warn', text: msg }; zeichne(); }
+  }
+}
+
 // ---------- Ereignisse
 document.addEventListener('click', async (ev) => {
   if (document.body.classList.contains('pc-modus')) return;
@@ -542,6 +597,8 @@ document.addEventListener('click', async (ev) => {
   if (t.dataset.monat) { z.monat = t.dataset.monat; zeichne(); window.scrollTo(0, 0); return; }
   if (t.dataset.tab) { z.tab = t.dataset.tab; merken('tab', z.tab); zeichne(); window.scrollTo(0, 0); return; }
   if (t.dataset.filter) { z.filter = t.dataset.filter; zeichne(); return; }
+  if (t.dataset.ausgleichFrage) { zeigeAusgleichFrage(t.dataset.ausgleichFrage); return; }
+  if (t.dataset.ausgleich != null && t.dataset.nr) { ausgleichSetzen(t.dataset.nr, t.dataset.ausgleich, t); return; }
   if (t.classList.contains('bu')) { t.setAttribute('aria-expanded', t.getAttribute('aria-expanded') === 'true' ? 'false' : 'true'); return; }
   if (t.id === 'menu-knopf') { zeigeMenu(); return; }
   if (t.id === 'eintragen-knopf') { zeigeEintragen(); return; }

@@ -19,6 +19,12 @@ export function monatPlus(monat, n) {
 }
 const tagVon = (datum) => Number(datum.slice(8, 10));
 const norm = (s) => (s || '').toLowerCase().replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+// „Ausgleich“: Buchung bleibt sichtbar und zählt bei den Kontoständen, aber nicht als Einzahlung
+// (Spalte „Gezahlt von“). Zwei Gründe: Geld aus einem Topf übers private Konto weitergeleitet,
+// oder mit der falschen Karte bezahlt und zurücküberwiesen.
+export const AUSGLEICH = { topf: 'Ausgleich: aus Topf', korrektur: 'Ausgleich: falsch bezahlt' };
+export const istAusgleich = (b) => /^ausgleich/i.test(b?.gezahltVon || '');
+export const ausgleichGrund = (b) => (!istAusgleich(b) ? null : /topf/i.test(b.gezahltVon) ? 'aus Topf weitergeleitet' : 'falsch bezahlt / Korrektur');
 const aktivIn = (posten, monat) => (!posten.ab || posten.ab <= monat) && (!posten.bis || posten.bis >= monat);
 
 /** Kontostand aus Anfangsbestand + Buchungen nach dem Stichtag bis einschließlich `bis`. */
@@ -110,7 +116,7 @@ export function monatsansicht(modell, monat, heute) {
   const gebuchtVonNach = (von, nach) => summe(
     modell.buchungen.filter((b) => b.giltFuer === monat && b.von === von && b.nach === nach), (b) => b.betrag);
   // Wer hat eingezahlt? „Gezahlt von“, sonst Inhaber des privaten Quellkontos (wie Spalte Zuordnung).
-  const zahler = (b) => b.gezahltVon || modell.konten.find((k) => k.name === b.von && k.rolle === 'privat')?.inhaber || null;
+  const zahler = (b) => istAusgleich(b) ? null : b.gezahltVon || modell.konten.find((k) => k.name === b.von && k.rolle === 'privat')?.inhaber || null;
   const eingezahlt = (person, nach) => summe(modell.buchungen.filter((b) => b.giltFuer === monat && b.nach === nach
     && zahler(b) === person
     // Geld für einen bestimmten Topf (z. B. geparktes Elterngeld) ist keine Sparrate
@@ -130,6 +136,11 @@ export function monatsansicht(modell, monat, heute) {
       const gebucht = eingezahlt(u.person, u.nach);
       return { ...u, gebucht, offen: r2(Math.max(0, u.betrag - gebucht)), erledigt: gebucht >= u.betrag - 0.005 };
     });
+
+  // Ausgleiche dieses Monats, die auf Gemeinschaftskonto oder Tagesgeld eingegangen sind (zählen nicht als Einzahlung)
+  const ausgleich = modell.buchungen
+    .filter((b) => b.giltFuer === monat && istAusgleich(b) && ['gemeinsam', 'Sparen'].includes(rolle(modell, b.nach)))
+    .map((b) => ({ nr: b.nr, posten: b.posten, betrag: b.betrag, nach: b.nach, grund: ausgleichGrund(b) }));
 
   const anteil = a ? {
     einkommenKai: wert('Einkommen Kai'), einkommenNatalie: wert('Einkommen Natalie'),
@@ -213,7 +224,7 @@ export function monatsansicht(modell, monat, heute) {
 
   return {
     monat, name: monatsname(monat), laufend, vergangen, zukunft, heute, konten, toepfe, toepfeSumme, sparkonten, nichtInToepfen,
-    ueberweisungen, anteil, ablauf, buchungen, abweichungen,
+    ueberweisungen, ausgleich, ausgleichSumme: summe(ausgleich, (b) => b.betrag), anteil, ablauf, buchungen, abweichungen,
     offenePunkte: modell.offenePunkte.filter((p) => !p.erledigt),
   };
 }
