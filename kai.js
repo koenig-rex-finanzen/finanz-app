@@ -6,7 +6,7 @@ import { betragFinden, datumFinden } from './kern/verstehen.js';
 
 let C;
 const S = { status: 'aus', fehler: null, ort: null, item: null, k: null, tab: null, meldung: null, laedt: false,
-  suche: '', fMonat: '', fArt: '', offen: null, c24: null, tr: null, gelesen: null };
+  suche: '', fMonat: '', fArt: '', offen: null, c24: null, tr: null, gelesen: null, topf: null };
 const h = (s) => C.h(s);
 const zahl = (t) => { const s = String(t ?? '').trim().replace(/\s|€/g, ''); if (!s) return NaN; return Math.round(Number(s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s) * 100) / 100; };
 const bt = (n) => (n == null || !isFinite(n) ? '' : Number(n).toFixed(2).replace('.', ','));
@@ -18,6 +18,7 @@ const TABS = [
   ['k-uebersicht', 'Übersicht', '<path d="M4 11l8-6 8 6v8a1 1 0 01-1 1h-4v-5H9v5H5a1 1 0 01-1-1z"/>'],
   ['k-vorschau', 'Vorschau', '<path d="M4 19h16M6 16V9M11 16V5M16 16v-5"/>'],
   ['k-buchungen', 'Buchungen', '<path d="M5 6h14M5 12h14M5 18h9"/>'],
+  ['k-toepfe', 'Töpfe', '<path d="M5 9h14l-1.5 10a1 1 0 01-1 .9h-9a1 1 0 01-1-.9z"/><path d="M8 9V7a4 4 0 018 0v2"/>'],
   ['k-depot', 'Depot', '<path d="M4 18l5-6 4 3 7-9"/><path d="M15 6h5v5"/>'],
   ['k-mehr', 'Mehr', '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'],
 ];
@@ -105,11 +106,11 @@ export function zeichne() {
   if (S.status === 'fehler' && !S.k) { wahl(`<div class="hinweis warn">${h(S.fehler)}</div><button class="knopf" data-k="neu-laden">Noch mal versuchen</button>`, false); return; }
   const r = K.rechneKai(S.k, C.heute());
   const meld = (S.fehler ? `<div class="hinweis info">${h(S.fehler)}</div>` : '') + (S.meldung ? `<div class="hinweis ${S.meldung.art}">${h(S.meldung.text)}</div>` : '');
-  const f = { 'k-uebersicht': uebersicht, 'k-vorschau': vorschau, 'k-buchungen': buchungen, 'k-depot': depotAnsicht, 'k-mehr': mehr }[S.tab] || uebersicht;
+  const f = { 'k-uebersicht': uebersicht, 'k-vorschau': vorschau, 'k-buchungen': buchungen, 'k-toepfe': toepfeAnsicht, 'k-depot': depotAnsicht, 'k-mehr': mehr }[S.tab] || uebersicht;
   wahl(meld + f(r));
-  if (['k-uebersicht', 'k-buchungen'].includes(S.tab)) C.app.insertAdjacentHTML('beforeend', '<button class="fab" data-k="eintragen" aria-label="Buchung eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>');
+  if (['k-uebersicht', 'k-buchungen'].includes(S.tab) || (S.tab === 'k-toepfe' && !S.topf)) C.app.insertAdjacentHTML('beforeend', '<button class="fab" data-k="eintragen" aria-label="Buchung eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>');
 }
-const navHtml = () => `<nav class="fuenf"><div class="wrap" role="tablist">${TABS.map(([id, n, p]) => `<button role="tab" aria-selected="${S.tab === id}" data-k="tab" data-arg="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>${n}</button>`).join('')}</div></nav>`;
+const navHtml = () => `<nav class="sechs"><div class="wrap" role="tablist">${TABS.map(([id, n, p]) => `<button role="tab" aria-selected="${S.tab === id}" data-k="tab" data-arg="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>${n}</button>`).join('')}</div></nav>`;
 
 /** Soll laut gemeinsamer Datei (Aufteilung, „Kai → Gemeinschaftskonto“) – nur gelesen. */
 function sollGemeinsam() {
@@ -139,7 +140,7 @@ function uebersicht(r) {
   return `${warn}${sollHinweis}
     <div class="k-hero"><div class="k-hero-oben"><span>Frei</span><span class="k-ampel ${luecke ? 'rot' : 'gruen'}">${luecke ? 'Lücke' : '✓ Alles gedeckt'}</span></div>
       <div class="k-gross ${r.frei < 0 ? 'neg' : ''}">${eur(r.frei)}</div>
-      <div class="k-hero-zeilen"><span>c24 <b>${eur(r.stand)}</b></span><span>verplant in Töpfen <b>${eur(r.verplant)}</b></span><span>Rücklage <b>${eur(r.ruecklage)}</b></span></div></div>
+      <div class="k-hero-zeilen"><span>c24 <b>${eur(r.stand)}</b></span>${r.spartopf ? `<span>Spartopf <b>${r.spartopf.fehlt ? 'Stand fehlt' : eur(r.spartopf.stand)}</b></span>` : ''}<span>verplant in Töpfen <b>${eur(r.verplant)}</b></span><span>Rücklage <b>${eur(r.ruecklage)}</b></span></div></div>
     <section><h2>Empfehlung für ${h(mn(r.akt, false))}</h2><div class="rechnung">
       <div class="rz"><span>Bis Monatsende behalten<small>damit die nächsten Monate gedeckt sind</small></span><b>${eur(r.behalten)}</b></div>
       <div class="rz"><span>Davon noch in die Rücklage<small>Topf „${h(K.RUECKLAGE)}“, Stand ${eur(r.ruecklage)}</small></span><b>${eur(r.inRuecklage)}</b></div>
@@ -149,7 +150,7 @@ function uebersicht(r) {
       ${zeilen.map((v) => `<button class="k-tz ${v.status === 'Lücke' ? 'luecke' : ''}" data-k="vmonat" data-arg="${v.monat}"><span>${h(mn(v.monat, false))}${v.status === 'Lücke' ? ' ⚠' : ''}</span><span class="${v.freiEnde < 0 ? 'neg' : ''}">${eur(v.freiEnde)}</span><span>${eur(v.behalten)}</span><span class="${v.variabel < 0 ? 'neg' : ''}">${eur(v.variabel)}</span></button>`).join('')}</div>
       <p class="hint" style="margin-top:6px">Ohne variable Ausgaben gerechnet. Antippen zeigt die Posten.</p></section>
     ${planIstHtml()}
-    <section><h2>Töpfe</h2><div class="topfsumme">${r.toepfe.map((t) => `<div class="z"><span>${h(t.name)}${t.frei ? ' <small class="hint">(zählt als frei)</small>' : ''}</span><b class="${t.stand < 0 ? 'neg' : ''}">${eur(t.stand)}</b></div>`).join('')}</div></section>
+    ${spartopfHinweis(r)}
     <p class="hint">Stichtag ${dl(r.stichtag)} · letzte Buchung ${dl(r.letzteBuchung) || '–'} · geladen ${S.gelesen ? new Date(S.gelesen).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '–'}</p>`;
 }
 function planIstHtml() {
@@ -186,18 +187,73 @@ function buchungen() {
     && (!q || [b.posten, b.gegen, b.beschreibung, b.kommentar, b.kategorie, b.nr, b.topf].some((x) => (x || '').toLowerCase().includes(q))))
     .sort((a, b) => (b.datum || '').localeCompare(a.datum || '') || b.nr.localeCompare(a.nr));
   const monate = [...new Set(k.buchungen.map((b) => b.giltFuer).filter(Boolean))].sort().reverse();
-  return `<section><h2>Buchungen c24</h2>
+  return `<section><h2>Buchungen</h2>
     <div class="k-filter"><input type="search" id="k-suche" placeholder="Suchen …" value="${h(S.suche)}" autocomplete="off">
       <select id="k-fmonat"><option value="">alle Monate</option>${monate.map((m) => `<option value="${m}" ${m === S.fMonat ? 'selected' : ''}>${h(mn(m))}</option>`).join('')}</select>
       <select id="k-fart"><option value="">alle Arten</option>${K.ARTEN.map((a) => `<option ${a === S.fArt ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
-    <p class="hint" style="margin:6px 0 10px">${liste.length} Buchungen · Summe Wirkung aufs Konto ${vz(Math.round(liste.reduce((s, b) => s + K.kontoeffekt(b), 0) * 100) / 100)}</p>
-    ${liste.length ? `<div class="buchungen">${liste.map((b) => `<div class="bu-wrap"><button class="bu" aria-expanded="false"><span class="t">${h(b.posten || b.gegen || b.beschreibung || b.art)}${b.topf ? ` <span class="chip aus-topf">${h(b.topf)}</span>` : ''}</span>
-      <span class="betrag ${b.art === 'Einnahme' ? 'plus' : ''}">${b.art === 'Einnahme' ? '+' : b.art === 'Ausgabe' ? '−' : ''}${eur(b.betrag)}</span>
-      <span class="r">${dk(b.datum)} · ${h(b.art)}${b.giltFuer && b.giltFuer !== b.datum?.slice(0, 7) ? ` <span class="okt">gilt für ${h(mn(b.giltFuer, false))}</span>` : ''}${b.gegen && b.posten ? ' · ' + h(b.gegen) : ''}</span>
-      <span class="more"><dl>${[['Nummer', b.nr], ['Datum', dl(b.datum)], ['Gilt für', mn(b.giltFuer)], ['Kategorie (Bank)', b.kategorie], ['Topf', b.topf], ['Beschreibung', b.beschreibung], ['Kommentar', b.kommentar], ['Quelle', b.quelle]].filter(([, w]) => w).map(([a, w]) => `<dt>${a}</dt><dd>${h(w)}</dd>`).join('')}</dl></span></button>
-      <div class="bu-aktion"><button class="knopf leise klein" data-k="bearbeiten" data-arg="${h(b.nr)}">Bearbeiten</button><button class="knopf leise klein" data-k="loeschen-frage" data-arg="${h(b.nr)}">Löschen</button></div></div>`).join('')}</div>`
+    <p class="hint" style="margin:6px 0 10px">${liste.length} Buchungen · Summe Wirkung aufs c24-Konto ${vz(Math.round(liste.reduce((s, b) => s + K.wirkungAuf(b, k.konto.name), 0) * 100) / 100)}</p>
+    ${liste.length ? `<div class="buchungen">${liste.map((b) => buchungHtml(b)).join('')}</div>`
     : '<div class="leer">Keine Buchungen gefunden.</div>'}
   </section>`;
+}
+function buchungHtml(b, topfName) {
+  const umb = b.art === K.UMBUCHUNG;
+  const fremd = !umb && b.konto && b.konto !== S.k.konto.name;
+  const wirk = topfName ? K.topfeffekt(b) : null;
+  const zeichen = topfName ? (wirk > 0 ? '+' : wirk < 0 ? '−' : '') : umb ? '⇄ ' : b.art === 'Einnahme' ? '+' : b.art === 'Ausgabe' ? '−' : '';
+  return `<div class="bu-wrap"><button class="bu" aria-expanded="false"><span class="t">${umb ? `${h(b.konto)} → ${h(b.gegen || '?')}` : h(b.posten || b.gegen || b.beschreibung || b.art)}${b.topf && !topfName && !umb ? ` <span class="chip aus-topf">${h(b.topf)}</span>` : ''}${fremd ? ` <span class="chip">${h(b.konto)}</span>` : ''}</span>
+      <span class="betrag ${(topfName ? wirk > 0 : b.art === 'Einnahme') ? 'plus' : ''}">${zeichen}${eur(b.betrag)}</span>
+      <span class="r">${dk(b.datum)} · ${h(b.art)}${b.giltFuer && b.giltFuer !== b.datum?.slice(0, 7) ? ` <span class="okt">gilt für ${h(mn(b.giltFuer, false))}</span>` : ''}${b.gegen && b.posten && !umb ? ' · ' + h(b.gegen) : ''}</span>
+      <span class="more"><dl>${[['Nummer', b.nr], ['Konto', umb ? `${b.konto} → ${b.gegen}` : b.konto], ['Datum', dl(b.datum)], ['Gilt für', mn(b.giltFuer)], ['Kategorie (Bank)', b.kategorie], ['Topf', b.topf], ['Beschreibung', b.beschreibung], ['Kommentar', b.kommentar], ['Quelle', b.quelle]].filter(([, w]) => w).map(([a, w]) => `<dt>${a}</dt><dd>${h(w)}</dd>`).join('')}</dl></span></button>
+      <div class="bu-aktion"><button class="knopf leise klein" data-k="bearbeiten" data-arg="${h(b.nr)}">Bearbeiten</button><button class="knopf leise klein" data-k="loeschen-frage" data-arg="${h(b.nr)}">Löschen</button></div></div>`;
+}
+
+// ---------------------------------------------------------------- Töpfe (eigener Reiter)
+const eigeneKonten = () => (S.k.konten || [S.k.konto]).filter((kt) => kt === S.k.konto || kt.rolle === 'Sparen');
+function spartopfKarte(r, kurz) {
+  const sp = r.spartopf;
+  if (!sp) return '';
+  if (sp.fehlt) return `<section class="k-spar"><div class="k-spar-kopf"><span>${h(sp.name)}</span></div><p>Für den Spartopf fehlt noch der Stand zum Stichtag. Bis dahin rechnet die App so, als läge alles auf c24.</p>
+    <button class="knopf hell" data-k="konto" data-arg="${sp.zeile}">Stand eintragen</button></section>`;
+  const o = sp.offen;
+  const zeile = Math.abs(o) < 0.005 ? '<span class="k-ampel gruen">✓ passt genau</span>'
+    : o > 0 ? `<span class="k-ampel rot">noch ${eur(o)} überweisen</span>` : `<span class="k-ampel">${eur(-o)} mehr drauf</span>`;
+  return `<section class="k-spar"><div class="k-spar-kopf"><span>${h(sp.name)}</span>${zeile}</div>
+    <div class="k-gross">${eur(sp.stand)}</div>
+    <div class="k-hero-zeilen"><span>verplant in Töpfen <b>${eur(sp.verplant)}</b></span><span>Rücklage auf c24 <b>${eur(r.ruecklage)}</b></span></div>
+    ${!kurz && o > 0.005 ? `<button class="knopf hell" style="margin-top:12px" data-k="umbuchen" data-arg="${o}">${eur(o)} aufs Spartopf umbuchen</button>` : ''}</section>`;
+}
+function spartopfHinweis(r) {
+  const sp = r.spartopf;
+  if (sp && !sp.fehlt && sp.offen > 0.005) return `<div class="hinweis info">Aufs ${h(sp.name)} fehlen noch ${eur(sp.offen)} für deine Töpfe. <button class="link" data-k="tab" data-arg="k-toepfe">Zu den Töpfen</button></div>`;
+  return '';
+}
+function toepfeAnsicht(r) {
+  if (S.topf) { const t = r.toepfe.find((x) => x.name === S.topf); if (t) return topfSeite(t); S.topf = null; }
+  const liste = (arr) => arr.map((t) => `<button class="k-topf" data-k="topf-auf" data-arg="${h(t.name)}"><span class="n">${h(t.name)}<small>${t.sparrate ? `${eur(t.sparrate)} im Monat` : 'keine Sparrate'}${t.bis ? ` · bis ${h(mn(t.bis))}` : ''}</small></span><b class="${t.stand < 0 ? 'neg' : ''}">${eur(t.stand)}</b><span class="pfeil" aria-hidden="true">›</span></button>`).join('');
+  const sp = r.toepfe.filter((t) => !t.frei), c = r.toepfe.filter((t) => t.frei);
+  return `${spartopfKarte(r)}
+    <section><h2>${r.spartopf ? `Auf dem ${h(r.spartopf.name)}` : 'Töpfe'}</h2><div class="k-toepfe">${liste(sp) || '<div class="leer">Keine Töpfe.</div>'}</div>
+      <div class="k-pp summe"><span>Summe</span><b>${eur(r.verplant)}</b></div></section>
+    ${c.length ? `<section><h2>Auf c24 (zählt als frei)</h2><div class="k-toepfe">${liste(c)}</div></section>` : ''}
+    ${S.k.toepfe.length < 10 ? '<button class="knopf leise" data-k="topf">Neuer Topf</button>' : ''}
+    <p class="hint" style="margin-top:10px">Die Sparraten werden jeden Monat zugeteilt. Wenn du Geld aufs Spartopf überweist, trägst du das als „Umbuchung“ ein. Töpfe ändern sich dadurch nicht.</p>`;
+}
+function topfSeite(t) {
+  const k = S.k;
+  const nach = (b) => b.datum && (!k.konto.stichtag || b.datum > k.konto.stichtag);
+  const bu = k.buchungen.filter((b) => b.topf === t.name && b.art !== K.UMBUCHUNG).sort((a, b) => (b.datum || '').localeCompare(a.datum || '') || b.nr.localeCompare(a.nr));
+  return `<div class="k-topfkopf"><button class="k-zurueck" data-k="topf-zu" aria-label="Zurück"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><h2>${h(t.name)}</h2></div>
+    <section class="k-spar"><div class="k-spar-kopf"><span>Stand ${h(mn(K.rechneKai(k, C.heute()).akt, false))}</span>${t.frei ? '<span class="k-ampel">zählt als frei</span>' : ''}</div><div class="k-gross ${t.stand < 0 ? 'neg' : ''}">${eur(t.stand)}</div>
+      <div class="k-hero-zeilen"><span>Sparrate <b>${eur(t.sparrate)}</b></span>${t.ab ? `<span>ab <b>${h(mn(t.ab))}</b></span>` : ''}${t.bis ? `<span>bis <b>${h(mn(t.bis))}</b></span>` : ''}</div></section>
+    <section><h2>So setzt sich der Stand zusammen</h2><div class="rechnung">
+      <div class="rz"><span>Anfangsbestand<small>zum Stichtag ${dl(k.konto.stichtag) || '–'}</small></span><b>${eur(t.anfang)}</b></div>
+      <div class="rz"><span>Sparraten zugeteilt<small>${t.ab ? `seit ${h(mn(t.ab))}` : 'kein Beginn gesetzt'}</small></span><b>${vz(t.zugeteilt)}</b></div>
+      <div class="rz"><span>Hineingelegt / entnommen<small>Buchungen mit diesem Topf nach dem Stichtag</small></span><b>${vz(t.bewegt)}</b></div>
+      <div class="rz summe"><span>Stand</span><b>${eur(t.stand)}</b></div></div>
+      ${t.bemerkung ? `<p class="hint" style="margin-top:6px">${h(t.bemerkung)}</p>` : ''}
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="knopf leise klein" data-k="topf-buchen" data-arg="In Topf legen">In Topf legen</button><button class="knopf leise klein" data-k="topf-buchen" data-arg="Aus Topf nehmen">Aus Topf nehmen</button><button class="knopf leise klein" data-k="topf" data-arg="${t.zeile}">Topf ändern</button></div></section>
+    <section><h2>Buchungen</h2>${bu.length ? `<div class="buchungen">${bu.map((b) => buchungHtml(b, t.name).replace('class="bu-wrap"', `class="bu-wrap${nach(b) ? '' : ' alt'}"`)).join('')}</div><p class="hint" style="margin-top:6px">Ausgegraut: vor dem Stichtag, steckt schon im Anfangsbestand.</p>` : '<div class="leer">Noch keine Buchungen mit diesem Topf.</div>'}</section>`;
 }
 
 function depotAnsicht() {
@@ -248,16 +304,13 @@ function mehr(r) {
       ${k.gemeinsam.map((g) => { const v = r.vorschau.find((x) => x.monat === g.monat); const istB = K.planIst(k, g.monat).gemeinsam.ist; const neu = soll[g.monat];
         return `<div class="k-tz"><span>${h(mn(g.monat, false))} ${g.monat.slice(2, 4)}</span><span>${eur(g.soll || 0)}${neu != null && Math.abs(neu - (g.soll || 0)) > 0.005 ? `<small class="warnfarbe"> neu ${eur(neu)}</small>` : ''}</span><span>${eur(istB)}</span><span>${eur(Math.max(0, (g.soll || 0) - istB))}</span></div>`; }).join('')}</div>
       <p class="hint" style="margin-top:6px">Soll kommt aus der gemeinsamen Datei (Blatt Aufteilung, nur gelesen, bei jedem Öffnen). ${abw.length ? `<button class="link" data-k="soll-uebernehmen">${abw.length} Änderung${abw.length > 1 ? 'en' : ''} übernehmen</button>` : 'Alles aktuell.'}</p></section>
-    <section><h2>Töpfe</h2><div class="feste">${r.toepfe.map((t) => `<div class="f-zeile"><div><div class="t">${h(t.name)}</div><div class="hint">${eur(t.sparrate)} im Monat${t.ab ? ` · ab ${mn(t.ab)}` : ''}${t.bis ? ` · bis ${mn(t.bis)}` : ''}${t.frei ? ' · zählt als frei' : ''}</div></div><b>${eur(t.stand)}</b><button class="knopf leise klein" data-k="topf" data-arg="${t.zeile}">Ändern</button></div>`).join('')}</div>
-      ${k.toepfe.length < 10 ? '<button class="knopf leise" style="margin-top:10px" data-k="topf">Neuer Topf</button>' : ''}</section>
     <section><h2>Feste Kosten</h2><div class="feste">${k.kosten.map((x) => `<div class="f-zeile"><div><div class="t">${h(x.posten)}</div><div class="hint">${h(x.rhythmus)}${x.rhythmus === 'jährlich' && x.faellig ? ` im ${mn('2000-' + String(x.faellig).padStart(2, '0'), false)}` : ''}${x.tag ? ` · am ${x.tag}.` : ''}${x.ab ? ` · ab ${mn(x.ab)}` : ''}${x.bis ? ` · bis ${mn(x.bis)}` : ''}</div></div><b>${eur(x.betrag)}</b><button class="knopf leise klein" data-k="posten" data-arg="kosten:${x.zeile}">Ändern</button></div>`).join('')}</div>
       ${k.kosten.length < 20 ? '<button class="knopf leise" style="margin-top:10px" data-k="posten" data-arg="kosten:">Neue feste Kosten</button>' : ''}</section>
     <section><h2>Einnahmen</h2><div class="feste">${k.einnahmen.map((x) => `<div class="f-zeile"><div><div class="t">${h(x.posten)}</div><div class="hint">${h(x.rhythmus)}${x.eingang ? ` · ${h(x.eingang)}` : ''}${x.ab ? ` · ab ${mn(x.ab)}` : ''}${x.bis ? ` · bis ${mn(x.bis)}` : ''}</div></div><b class="plus">${eur(x.betrag)}</b><button class="knopf leise klein" data-k="posten" data-arg="einnahmen:${x.zeile}">Ändern</button></div>`).join('')}</div>
       ${k.einnahmen.length < 8 ? '<button class="knopf leise" style="margin-top:10px" data-k="posten" data-arg="einnahmen:">Neue Einnahme</button>' : ''}</section>
     <section><h2>Offene Punkte</h2>${offen.length ? `<div class="feste">${offen.map((o) => `<div class="f-zeile"><div><div class="t">${h(o.punkt)}</div>${o.notiz ? `<div class="hint">${h(o.notiz)}</div>` : ''}</div><span></span><button class="knopf leise klein" data-k="erledigt" data-arg="${o.zeile}">Erledigt</button></div>`).join('')}</div>` : '<div class="leer">Nichts offen.</div>'}
       ${k.offen.length - offen.length ? `<p class="hint" style="margin-top:6px">${k.offen.length - offen.length} erledigt.</p>` : ''}</section>
-    <section><h2>Konto</h2><div class="topfsumme"><div class="z"><span>${h(k.konto.name)}: Stand zum Stichtag</span><b>${k.konto.anfang == null ? 'fehlt' : eur(k.konto.anfang)}</b></div><div class="z"><span>Stichtag</span><b>${dl(k.konto.stichtag) || '–'}</b></div></div>
-      <button class="knopf leise" style="margin-top:10px" data-k="konto">Ändern</button>
+    <section><h2>Konten</h2><div class="feste">${eigeneKonten().map((kt) => `<div class="f-zeile"><div><div class="t">${h(kt.name)}</div><div class="hint">Stand zum Stichtag ${kt.anfang == null ? 'fehlt' : `${eur(kt.anfang)} am ${dl(kt.stichtag) || '–'}`}</div></div><b>${(() => { const st = K.standVon(k, kt); return st == null ? '–' : eur(st); })()}</b><button class="knopf leise klein" data-k="konto" data-arg="${kt.zeile}">Ändern</button></div>`).join('')}</div>
       ${S.item?.webUrl ? `<a class="knopf leise" style="margin-top:10px" href="${h(S.item.webUrl)}" target="_blank" rel="noopener">In Excel öffnen</a>` : ''}</section>`;
 }
 
@@ -269,13 +322,14 @@ function c24Html() {
   const postenListe = postenAuswahl();
   return `<div class="m-abgleich"><div class="m-ab-kopf"><b>${a.zeilen.length} Zeilen im Export</b><button class="link" data-k="c24-zu">schließen</button></div>
     <div class="topfsumme"><div class="z"><span>Schon importiert</span><b>${zaehl('importiert')}</b></div><div class="z"><span>Von Hand eingetragen (nur Import-ID ergänzen)</span><b>${zaehl('ergaenzen')}</b></div>
-      <div class="z"><span>Bitte prüfen</span><b class="${zaehl('pruefen') ? 'warnfarbe' : ''}">${zaehl('pruefen')}</b></div><div class="z"><span>Neu</span><b>${zaehl('neu')}</b></div></div>
-    <form id="k-c24-form"><div class="buchungen">${a.zeilen.map((x, i) => x.status === 'importiert' ? '' : `<div class="m-ab-zeile k-c24 ${x.status}">
+      ${zaehl('gegenbuchung') ? `<div class="z"><span>Spiegelzeilen vom Spartopf (stehen schon als Umbuchung)</span><b>${zaehl('gegenbuchung')}</b></div>` : ''}<div class="z"><span>Bitte prüfen</span><b class="${zaehl('pruefen') ? 'warnfarbe' : ''}">${zaehl('pruefen')}</b></div><div class="z"><span>Neu</span><b>${zaehl('neu')}</b></div></div>
+    <form id="k-c24-form"><div class="buchungen">${a.zeilen.map((x, i) => x.status === 'importiert' || x.status === 'gegenbuchung' ? '' : `<div class="m-ab-zeile k-c24 ${x.status}">
       <label class="haken"><input type="checkbox" name="w${i}" ${x.status === 'pruefen' ? '' : 'checked'}><span><b>${h(x.vorschlag?.gegen || x.z.empfaenger || x.z.typ)}</b><small>${dk(x.z.datum)} · ${h((x.z.zweck || x.z.typ || '').slice(0, 60))}</small></span></label>
       <b class="${x.z.betrag > 0 ? 'plus' : ''}">${vz(x.z.betrag)}</b>
       ${x.status === 'ergaenzen' ? `<div class="hint">Eingetragen als ${h(x.treffer.nr)} (${h(x.treffer.posten || x.treffer.gegen || '')}) – nur die Import-ID wird ergänzt.</div>`
         : `${x.status === 'pruefen' ? `<div class="hint warnfarbe">Unklar: ${h(x.grund)}${x.treffer ? ` (${h(x.treffer.nr)})` : ''}. Nur übernehmen, wenn es wirklich neu ist.</div>` : ''}
-        <div class="zwei"><label class="feld"><span>Posten</span><select name="p${i}">${['', ...postenListe].map((p) => `<option ${p === (x.vorschlag.posten || '') ? 'selected' : ''} value="${h(p)}">${h(p || '– variabel –')}</option>`).join('')}</select></label>
+        ${x.vorschlag.art === K.UMBUCHUNG ? `<div class="hint">Umbuchung ${h(x.vorschlag.konto)} → ${h(x.vorschlag.gegen)}</div>` : ''}
+        <div class="zwei"><label class="feld" ${x.vorschlag.art === K.UMBUCHUNG ? 'hidden' : ''}><span>Posten</span><select name="p${i}">${['', ...postenListe].map((p) => `<option ${p === (x.vorschlag.posten || '') ? 'selected' : ''} value="${h(p)}">${h(p || '– variabel –')}</option>`).join('')}</select></label>
         <label class="feld"><span>Gilt für</span><input type="month" name="g${i}" value="${x.vorschlag.giltFuer}"></label></div>`}</div>`).join('')}</div>
     <div class="knoepfe"><button class="knopf" type="submit">Ausgewählte übernehmen</button></div></form></div>`;
 }
@@ -289,21 +343,31 @@ const knoepfe = (fehler, text = 'Speichern', extra = '') => `${fehler ? `<p clas
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 
 function eintragenDialog(fehler, v0) {
-  const v = v0 || { art: 'Ausgabe', datum: C.heute(), giltFuer: C.heute().slice(0, 7), betrag: '', posten: '', topf: '', gegen: '', beschreibung: '', kommentar: '' };
+  const v = { art: 'Ausgabe', datum: C.heute(), giltFuer: C.heute().slice(0, 7), betrag: '', posten: '', topf: '', gegen: '', beschreibung: '', kommentar: '', konto: S.k.konto.name, ...(v0 || {}) };
+  const kontoNamen = eigeneKonten().map((kt) => kt.name);
+  const umb = v.art === K.UMBUCHUNG;
+  const nachVorschlag = umb && kontoNamen.includes(v.gegen) ? v.gegen : kontoNamen.find((n) => n !== v.konto) || '';
   const bearb = Boolean(v.nr);
   dialog(`<form id="k-eintragen" novalidate><h2 id="menu-titel">${bearb ? h(v.nr) + ' ändern' : 'Buchung eintragen'}</h2>
     ${bearb ? '' : `<div class="sprechen">${SR ? '<button type="button" class="mikro" id="k-mikro" aria-label="Sprechen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>' : ''}
       <input id="k-satz" autocomplete="off" placeholder="z. B. „gestern 26,40 Tanken“"><button type="button" class="knopf leise klein" id="k-satz-los">Übernehmen</button></div><p class="erkannt" id="k-erkannt"></p>`}
-    <div class="seg vier-seg">${K.ARTEN.map((a) => `<label><input type="radio" name="art" value="${a}" ${v.art === a ? 'checked' : ''}><span>${a.replace(' legen', '').replace(' nehmen', '')}</span></label>`).join('')}</div>
+    <div class="seg fuenf-seg">${K.ARTEN.map((a) => `<label><input type="radio" name="art" value="${a}" ${v.art === a ? 'checked' : ''}><span>${a.replace(' legen', '').replace(' nehmen', '')}</span></label>`).join('')}</div>
     ${feld('betrag', 'Betrag in €', v.betrag === '' ? '' : bt(Number(v.betrag)), 'inputmode="decimal" placeholder="0,00"')}
     <div class="zwei">${feld('datum', 'Datum', v.datum, 'type="date"')}${feld('giltFuer', 'Gilt für', v.giltFuer, 'type="month"')}</div>
-    ${auswahl('posten', 'Posten', postenAuswahl(), v.posten, '– variabel –')}
+    ${kontoNamen.length > 1 ? `<div class="zwei">${auswahl('konto', umb ? 'Von Konto' : 'Konto', kontoNamen, v.konto)}<span class="nur-umb" ${umb ? '' : 'hidden'}>${auswahl('nach', 'Nach Konto', kontoNamen, nachVorschlag)}</span></div>` : `<input type="hidden" name="konto" value="${h(v.konto)}">`}
+    <div class="nicht-umb" ${umb ? 'hidden' : ''}>${auswahl('posten', 'Posten', postenAuswahl(), v.posten, '– variabel –')}
     ${auswahl('topf', 'Topf', S.k.toepfe.map((t) => t.name), v.topf, 'kein Topf')}
-    ${feld('gegen', 'Gegenüber', v.gegen, 'placeholder="z. B. Aral"')}${feld('beschreibung', 'Beschreibung (optional)', v.beschreibung)}${feld('kommentar', 'Kommentar (optional)', v.kommentar)}
+    ${feld('gegen', 'Gegenüber', umb ? '' : v.gegen, 'placeholder="z. B. Aral"')}</div>${feld('beschreibung', 'Beschreibung (optional)', v.beschreibung)}${feld('kommentar', 'Kommentar (optional)', v.kommentar)}
     ${bearb ? `<input type="hidden" name="nr" value="${h(v.nr)}">` : ''}
     <p class="zusammen" id="k-zus"></p>${knoepfe(fehler, bearb ? 'Speichern' : 'Eintragen')}</form>`);
   const f = document.getElementById('k-eintragen');
-  const zus = () => { const x = Object.fromEntries(new FormData(f)); const b = zahl(x.betrag); document.getElementById('k-zus').textContent = b > 0 ? `${x.art} über ${eur(b)}${x.posten ? ', ' + x.posten : ''}${x.topf ? ', Topf ' + x.topf : ''}, gilt für ${mn(x.giltFuer)}.` : ''; };
+  const zus = () => {
+    const x = Object.fromEntries(new FormData(f)); const b = zahl(x.betrag); const u = x.art === K.UMBUCHUNG;
+    f.querySelectorAll('.nur-umb').forEach((e) => { e.hidden = !u; }); f.querySelectorAll('.nicht-umb').forEach((e) => { e.hidden = u; });
+    const lab = f.querySelector('select[name=konto]')?.closest('label')?.querySelector('span'); if (lab) lab.textContent = u ? 'Von Konto' : 'Konto';
+    document.getElementById('k-zus').textContent = !(b > 0) ? '' : u ? `Umbuchung über ${eur(b)} von ${x.konto} nach ${x.nach || '?'}. Töpfe bleiben gleich.`
+      : `${x.art} über ${eur(b)}${x.posten ? ', ' + x.posten : ''}${x.topf ? ', Topf ' + x.topf : ''}${eigeneKonten().length > 1 ? ', ' + x.konto : ''}, gilt für ${mn(x.giltFuer)}.`;
+  };
   f.addEventListener('input', zus);
   f.addEventListener('change', (e) => { if (e.target.name === 'datum' || e.target.name === 'posten') f.giltFuer.value = K.giltFuer(f.datum.value || C.heute(), f.posten.value); zus(); });
   zus();
@@ -340,10 +404,10 @@ function eintragenDialog(fehler, v0) {
   }
 }
 
-function kontoDialog(fehler) {
-  const k = S.k.konto;
+function kontoDialog(zeile, fehler) {
+  const k = eigeneKonten().find((x) => x.zeile === Number(zeile)) || S.k.konto;
   dialog(`<form id="k-konto" novalidate><h2 id="menu-titel">Kontostand ${h(k.name)}</h2><p class="hint">Stand laut Bank am Ende des Stichtags. Buchungen bis dahin ändern den Stand nicht, zählen aber im Ist.</p>
-    ${feld('anfang', 'Stand in €', bt(k.anfang), 'inputmode="decimal"')}${feld('stichtag', 'Stichtag', k.stichtag || C.heute(), 'type="date"')}${knoepfe(fehler)}</form>`);
+    ${feld('anfang', 'Stand in €', bt(k.anfang), 'inputmode="decimal"')}${feld('stichtag', 'Stichtag', k.stichtag || C.heute(), 'type="date"')}<input type="hidden" name="zeile" value="${k.zeile}">${knoepfe(fehler)}</form>`);
 }
 function ruecklageDialog(betrag, fehler) {
   dialog(`<form id="k-ruecklage" novalidate><h2 id="menu-titel">In Rücklage legen</h2>
@@ -386,10 +450,14 @@ export async function klick(t) {
     case 'tab': S.tab = arg; merk('ug.ktab', arg); S.meldung = null; C.zeichne(); window.scrollTo(0, 0); return true;
     case 'neu-laden': if (C.menu.open) C.menu.close(); C.od.privatOrdnerVergessen('Kai'); S.status = 'aus'; await laden({ immer: true }); return true;
     case 'eintragen': eintragenDialog(); return true;
-    case 'konto': kontoDialog(); return true;
+    case 'konto': kontoDialog(arg); return true;
+    case 'topf-auf': S.topf = arg; C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'topf-zu': S.topf = null; C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'topf-buchen': eintragenDialog(null, { art: arg, topf: S.topf, posten: 'Sonstiges' }); return true;
+    case 'umbuchen': { const sp = S.k.spartopf; eintragenDialog(null, { art: K.UMBUCHUNG, konto: S.k.konto.name, gegen: sp?.name, betrag: Number(arg) || '', beschreibung: 'Sparraten aufs Spartopf' }); return true; }
     case 'ruecklage': { const r = K.rechneKai(S.k, C.heute()); ruecklageDialog(r.inRuecklage || r.behalten); return true; }
     case 'vmonat': S.offen = S.offen === arg ? null : arg; if (S.tab !== 'k-vorschau') { S.tab = 'k-vorschau'; merk('ug.ktab', S.tab); } C.zeichne(); return true;
-    case 'bearbeiten': { const b = S.k.buchungen.find((x) => x.nr === arg); eintragenDialog(null, { ...b }); return true; }
+    case 'bearbeiten': { const b = S.k.buchungen.find((x) => x.nr === arg); eintragenDialog(null, { ...b, betrag: b.betrag }); return true; }
     case 'loeschen-frage': {
       const b = S.k.buchungen.find((x) => x.nr === arg);
       dialog(`<h2 id="menu-titel">${h(b.nr)} löschen?</h2><p><b>${h(b.posten || b.gegen || b.art)}</b>, ${eur(b.betrag)} am ${dl(b.datum)}</p><p class="hint">Die Zeile wird geleert (A–N), die Formeln bleiben.</p>
@@ -443,9 +511,13 @@ export async function absenden(form) {
     case 'k-eintragen': {
       const betrag = zahl(x.betrag);
       const f = !(betrag > 0) ? 'Bitte einen Betrag größer als 0 eingeben.' : !x.datum ? 'Bitte das Datum angeben.' : !x.giltFuer ? 'Bitte „Gilt für“ angeben.'
-        : x.art.includes('Topf') && !x.topf ? 'Bei „In Topf legen“ und „Aus Topf nehmen“ bitte den Topf wählen.' : null;
-      if (f) { eintragenDialog(f, { ...x, betrag: x.betrag }); return true; }
-      const b = { datum: x.datum, giltFuer: x.giltFuer, art: x.art, konto: S.k.konto.name, gegen: x.gegen.trim(), betrag, posten: x.posten, topf: x.topf, beschreibung: x.beschreibung.trim(), kommentar: x.kommentar.trim() };
+        : x.art.includes('Topf') && !x.topf && x.art !== K.UMBUCHUNG ? 'Bei „In Topf legen“ und „Aus Topf nehmen“ bitte den Topf wählen.' : null;
+      const umb = x.art === K.UMBUCHUNG;
+      const f2 = f || (umb && (!x.nach || x.nach === x.konto) ? 'Bei einer Umbuchung bitte zwei verschiedene Konten wählen.' : null);
+      if (f2) { eintragenDialog(f2, { ...x, gegen: umb ? x.nach : x.gegen, betrag: x.betrag }); return true; }
+      const konto = x.konto || S.k.konto.name;
+      const b = umb ? { datum: x.datum, giltFuer: x.giltFuer, art: x.art, konto, gegen: x.nach, betrag, posten: '', topf: '', beschreibung: x.beschreibung.trim(), kommentar: x.kommentar.trim() }
+        : { datum: x.datum, giltFuer: x.giltFuer, art: x.art, konto, gegen: (x.gegen || '').trim(), betrag, posten: x.posten, topf: x.topf, beschreibung: x.beschreibung.trim(), kommentar: x.kommentar.trim() };
       if (x.nr) {
         const alt = S.k.buchungen.find((y) => y.nr === x.nr);
         await schreiben(async (api) => { const z = await zeileVonNr(api, x.nr); await api.schreib('Buchungen', `B${z}:L${z}`, [buchungZeile({ ...alt, ...b }, x.nr).slice(1, 12)]); }, `${x.nr} geändert.`, { knopf, dialogFehler: (fe) => eintragenDialog(fe, { ...x }) });
@@ -464,8 +536,9 @@ export async function absenden(form) {
     }
     case 'k-konto': {
       const anfang = zahl(x.anfang);
-      if (!isFinite(anfang) || !x.stichtag) { kontoDialog('Bitte Stand und Stichtag angeben.'); return true; }
-      await schreiben((api) => api.schreib('Konten', 'E5:F5', [[anfang, ser(x.stichtag)]]), 'Kontostand gespeichert.', { knopf, dialogFehler: kontoDialog });
+      const z = Number(x.zeile) || 5;
+      if (!isFinite(anfang) || !x.stichtag) { kontoDialog(z, 'Bitte Stand und Stichtag angeben.'); return true; }
+      await schreiben((api) => api.schreib('Konten', `E${z}:F${z}`, [[anfang, ser(x.stichtag)]]), 'Kontostand gespeichert.', { knopf, dialogFehler: (fe) => kontoDialog(z, fe) });
       return true;
     }
     case 'k-topf': {
@@ -520,9 +593,9 @@ export async function absenden(form) {
       const a = S.c24;
       const neu = []; const ergaenzen = [];
       a.zeilen.forEach((r, i) => {
-        if (r.status === 'importiert' || !x['w' + i]) return;
+        if (r.status === 'importiert' || r.status === 'gegenbuchung' || !x['w' + i]) return;
         if (r.status === 'ergaenzen') ergaenzen.push({ nr: r.treffer.nr, id: r.z.id });
-        else neu.push({ ...r.vorschlag, posten: x['p' + i] || null, giltFuer: x['g' + i] || r.vorschlag.giltFuer });
+        else neu.push({ ...r.vorschlag, posten: r.vorschlag.art === K.UMBUCHUNG ? null : x['p' + i] || null, giltFuer: x['g' + i] || r.vorschlag.giltFuer });
       });
       if (!neu.length && !ergaenzen.length) return true;
       dialog(`<h2 id="menu-titel">Übernehmen?</h2><p>${neu.length} neue Buchungen eintragen${ergaenzen.length ? ` und bei ${ergaenzen.length} von Hand eingetragenen die Import-ID ergänzen` : ''}.</p>

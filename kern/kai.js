@@ -14,7 +14,8 @@ export const monatPlus = (m, n) => { const d = new Date(Date.UTC(+m.slice(0, 4),
 const monateZwischen = (a, b) => (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7));
 export const serial = (iso) => { const [y, m, d] = iso.split('-').map(Number); return (Date.UTC(y, m - 1, d || 1) - Date.UTC(1899, 11, 30)) / 864e5; };
 
-export const ARTEN = ['Einnahme', 'Ausgabe', 'In Topf legen', 'Aus Topf nehmen'];
+export const ARTEN = ['Einnahme', 'Ausgabe', 'In Topf legen', 'Aus Topf nehmen', 'Umbuchung'];
+export const UMBUCHUNG = 'Umbuchung'; // von Konto (E) nach Konto (F), z. B. c24 → Spartopf; ändert keine Töpfe
 export const POSTEN_EXTRA = ['Überweisung Gemeinschaftskonto', 'Trade Republic (extra)', 'Sparraten-Erstattung (alt)', 'Sonstiges'];
 export const GK_POSTEN = 'Überweisung Gemeinschaftskonto';
 export const RUECKLAGE = 'Rücklage Lücke';
@@ -31,7 +32,13 @@ export async function leseKai(daten) {
     return out;
   };
   const K = bl('Konten');
-  const konto = { name: txt(K.get('B5')) || 'Kai c24', anfang: zahl(K.get('E5')), stichtag: excelDatum(K.get('F5')) };
+  const kontoZeile = (r) => ({ zeile: r, id: txt(K.get('A' + r)), name: txt(K.get('B' + r)), bank: txt(K.get('C' + r)), rolle: txt(K.get('D' + r)),
+    anfang: zahl(K.get('E' + r)), stichtag: excelDatum(K.get('F' + r)), endung: txt(K.get('I' + r)), excelStand: zahl(K.get('G' + r)) });
+  const konto = { ...kontoZeile(5), name: txt(K.get('B5')) || 'Kai c24' };
+  const konten = [konto];
+  for (let r = 6; r <= 12; r++) { const x = kontoZeile(r); if (x.name) konten.push(x); }
+  // Pocket „Spartopf“: echtes Konto mit Rolle „Sparen“; dort liegen die Töpfe mit „Zählt als frei = Nein“.
+  const spartopf = konten.find((x) => x.rolle === 'Sparen') || null;
   const buchungen = zeilen('Buchungen', BEREICHE.buchungen, (c) => ({
     nr: txt(c('A')), datum: excelDatum(c('B')), giltFuer: mon(c('C')), art: txt(c('D')), konto: txt(c('E')), gegen: txt(c('F')),
     betrag: zahl(c('G')) || 0, kategorie: txt(c('H')), posten: txt(c('I')), topf: txt(c('J')), beschreibung: txt(c('K')),
@@ -60,20 +67,24 @@ export async function leseKai(daten) {
   const V = bl('Vorschau');
   const sp = 'CDEFGHIJKLMN'.split('');
   const excel = {
-    aktMonat: mon(S.get('C4')), kontostand: zahl(K.get('G5')), verplant: zahl(S.get('C11')), ruecklage: zahl(S.get('C12')), frei: zahl(S.get('C14')),
+    aktMonat: mon(S.get('C4')), kontostand: zahl(K.get('G5')), spartopf: spartopf?.excelStand ?? null, nochAufsPocket: zahl(bl('Töpfe').get('I17')), verplant: zahl(S.get('C11')), ruecklage: zahl(S.get('C12')), frei: zahl(S.get('C14')),
     status: txt(S.get('C17')), fehlbetrag: zahl(S.get('C19')), behalten: zahl(S.get('C20')), variabel: zahl(S.get('C22')),
     vorschau: sp.map((c) => ({ monat: mon(V.get(c + '4')), ergebnis: zahl(V.get(c + '61')), freiEnde: zahl(V.get(c + '62')), behalten: zahl(V.get(c + '64')), variabel: zahl(V.get(c + '65')), status: txt(V.get(c + '66')) })),
   };
   return {
-    konto, buchungen, kosten, einnahmen, toepfe, gemeinsam, depot, tr, offen,
+    konto, konten, spartopf, buchungen, kosten, einnahmen, toepfe, gemeinsam, depot, tr, offen,
     start: { rechnenAb: mon(S.get('D4')), planMonat: mon(S.get('C5')), horizont: zahl(S.get('C6')) || 3 }, excel,
   };
 }
 
 // ---------------------------------------------------------------- Rechnen (wie die Formeln)
 
-export const kontoeffekt = (b) => (b.art === 'Einnahme' ? b.betrag : b.art === 'Ausgabe' ? -b.betrag : 0);
-export const topfeffekt = (b) => (!b.topf ? 0 : b.art === 'Ausgabe' || b.art === 'Aus Topf nehmen' ? -b.betrag : b.betrag);
+/** Wirkung aufs Konto in Spalte E (wie Buchungen!O). Umbuchung: geht von E ab (und kommt bei F an, siehe standVon). */
+export const kontoeffekt = (b) => (b.art === 'Einnahme' ? b.betrag : b.art === 'Ausgabe' || b.art === UMBUCHUNG ? -b.betrag : 0);
+/** Wie Buchungen!P. Eine Umbuchung ändert keinen Topf. */
+export const topfeffekt = (b) => (!b.topf || b.art === UMBUCHUNG ? 0 : b.art === 'Ausgabe' || b.art === 'Aus Topf nehmen' ? -b.betrag : b.betrag);
+/** Wirkung einer Buchung auf ein bestimmtes Konto (für Anzeige und Abgleich). */
+export const wirkungAuf = (b, name) => r2((b.konto === name ? kontoeffekt(b) : 0) + (b.art === UMBUCHUNG && b.gegen === name ? b.betrag : 0));
 
 /** Plan eines Postens im Monat (Kosten L / Vorschau). */
 export function plan(p, m) {
@@ -83,10 +94,13 @@ export function plan(p, m) {
 }
 const ist = (k, posten, m, art) => summe(k.buchungen.filter((b) => b.posten === posten && b.giltFuer === m && b.art === art), (b) => b.betrag);
 
-export function kontostand(k) {
-  if (k.konto.anfang == null) return null;
-  return r2(k.konto.anfang + summe(k.buchungen.filter((b) => b.konto === k.konto.name && b.datum && (!k.konto.stichtag || b.datum > k.konto.stichtag)), kontoeffekt));
+/** Stand eines Kontos (wie Konten!G): Anfangsbestand + Buchungen nach dem Stichtag dieses Kontos. */
+export function standVon(k, kt) {
+  if (!kt || kt.anfang == null) return null;
+  const nach = (b) => b.datum && (!kt.stichtag || b.datum > kt.stichtag);
+  return r2(kt.anfang + summe(k.buchungen.filter(nach), (b) => wirkungAuf(b, kt.name)));
 }
+export const kontostand = (k) => standVon(k, k.konto);
 
 export function toepfeStand(k, akt) {
   return k.toepfe.map((t) => {
@@ -110,7 +124,11 @@ export function rechneKai(k, heute, { horizont } = {}) {
   const verplant = summe(toepfe.filter((t) => !t.frei), (t) => t.stand);
   const ruecklage = summe(toepfe.filter((t) => t.frei), (t) => t.stand);
   const fehlt = stand == null;
-  const frei = fehlt ? 0 : r2(stand - verplant);
+  // Spartopf (Pocket): Geld der Töpfe liegt dort. Frei = c24 + Spartopf − Töpfe. Ohne Spartopf-Stand zählt er mit 0 (wie N() in Excel).
+  const sp = k.spartopf || null;
+  const spStand = sp ? standVon(k, sp) : null;
+  const spartopf = sp ? { name: sp.name, zeile: sp.zeile, stand: spStand, fehlt: spStand == null, anfang: sp.anfang, stichtag: sp.stichtag, verplant, offen: spStand == null ? null : r2(verplant - spStand) } : null;
+  const frei = fehlt ? 0 : r2(stand + (spStand || 0) - verplant);
 
   const monate = Array.from({ length: 12 }, (_, i) => monatPlus(akt, i));
   const vorschau = monate.map((m, i) => {
@@ -139,7 +157,7 @@ export function rechneKai(k, heute, { horizont } = {}) {
   const fehlbetrag = r2(Math.max(0, -Math.min(...imH.map((v) => v.freiEnde)), -vorschau[0].variabel));
   const behalten = vorschau[0].behalten;
   return {
-    akt, horizont: H, fehlt, stand, toepfe, verplant, ruecklage, frei, vorschau,
+    akt, horizont: H, fehlt, stand, spartopf, toepfe, verplant, ruecklage, frei, vorschau,
     status: fehlt ? 'Kontostand fehlt' : luecke ? 'Lücke' : 'OK', ersterMinusMonat: luecke?.monat || null,
     fehlbetrag, behalten, inRuecklage: r2(Math.max(0, behalten - ruecklage)), variabel: vorschau[0].variabel,
     stichtag: k.konto.stichtag, letzteBuchung: k.buchungen.reduce((x, b) => (b.datum > x ? b.datum : x), ''),
@@ -194,7 +212,7 @@ export function leseC24(text) {
     const g = (n) => (i(n) >= 0 ? (f[i(n)] || '').trim() : '');
     daten.push({ datum, betrag, typ: g('Transaktionstyp'), karteneinsatz: g('Karteneinsatz'), empfaenger: g('Zahlungsempfänger'),
       iban: g('IBAN'), bic: g('BIC'), zweck: g('Verwendungszweck'), beschreibung: g('Beschreibung'), kategorie: g('Kategorie'), unterkategorie: g('Unterkategorie'),
-      bargeld: g('Bargeldabhebung') });
+      bargeld: g('Bargeldabhebung'), kontonummer: g('Kontonummer'), kontoname: g('Kontoname') });
   }
   return daten;
 }
@@ -223,8 +241,16 @@ export async function importIds(zeilen) {
  */
 export function vorschlag(z, kk, { gkEndung, regeln = [] } = {}) {
   const text = `${z.empfaenger} ${z.zweck} ${z.beschreibung}`;
-  const art = z.betrag > 0 ? 'Einnahme' : 'Ausgabe';
-  let posten = null, topf = null, gegen = z.empfaenger || 'Extern', folgemonat = false;
+  let art = z.betrag > 0 ? 'Einnahme' : 'Ausgabe';
+  let posten = null, topf = null, gegen = z.empfaenger || 'Extern', folgemonat = false, konto = kk.konto.name;
+  const sp = kk.spartopf;
+  if (sp && aufSpartopf(z, sp)) konto = sp.name; // Zeile gehört zum Pocket selbst (z. B. Zinsen)
+  else if (sp && sp.endung && (z.iban || '').replace(/\s/g, '').endsWith(sp.endung)) {
+    // Überweisung zwischen c24 und Spartopf
+    return { datum: z.datum, giltFuer: z.datum.slice(0, 7), art: UMBUCHUNG, konto: z.betrag < 0 ? kk.konto.name : sp.name, gegen: z.betrag < 0 ? sp.name : kk.konto.name,
+      betrag: r2(Math.abs(z.betrag)), kategorie: [z.kategorie, z.unterkategorie].filter(Boolean).join(' / ') || null, posten: null, topf: null,
+      beschreibung: [z.zweck || z.typ, z.empfaenger].filter(Boolean).join(' · ').slice(0, 250), kommentar: null, quelle: 'CSV', importId: z.id };
+  }
   for (const r of regeln) if (r.text && text.toLowerCase().includes(r.text.toLowerCase())) { posten = r.posten || posten; topf = r.topf || topf; folgemonat = !!r.folgemonat; break; }
   if (!posten) {
     const rate = kk.kosten.find((k) => k.posten === 'PayPal-Rate');
@@ -241,13 +267,15 @@ export function vorschlag(z, kk, { gkEndung, regeln = [] } = {}) {
   const datum = z.datum;
   const gf = folgemonat ? monatPlus(datum.slice(0, 7), 1) : giltFuer(datum, posten);
   return {
-    datum, giltFuer: gf, art, konto: kk.konto.name, gegen, betrag: r2(Math.abs(z.betrag)),
+    datum, giltFuer: gf, art, konto, gegen, betrag: r2(Math.abs(z.betrag)),
     kategorie: [z.kategorie, z.unterkategorie].filter(Boolean).join(' / ') || null, posten, topf,
     beschreibung: [z.zweck || [z.typ, z.karteneinsatz].filter(Boolean).join(' '), z.empfaenger].filter(Boolean).join(' · ').slice(0, 250),
     kommentar: null, quelle: 'CSV', importId: z.id,
   };
 }
 
+/** Gehört die Exportzeile zum Pocket selbst (Kontonummer/Kontoname im Export)? */
+export const aufSpartopf = (z, sp) => Boolean(sp && ((sp.endung && (z.kontonummer || '').replace(/\s/g, '').endsWith(sp.endung)) || (z.kontoname && sp.name && sp.name.toLowerCase().includes(z.kontoname.toLowerCase()) && z.kontoname.length > 3)));
 const tag = (iso) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 864e5;
 /**
  * Abgleich c24-Export mit der Datei. Schreibt nichts.
@@ -258,9 +286,19 @@ export async function abgleichC24(zeilen, kk, opt = {}) {
   await importIds(zeilen);
   const ids = new Set(kk.buchungen.map((b) => b.importId).filter(Boolean));
   const benutzt = new Set();
-  const signiert = (b) => (b.art === 'Einnahme' ? b.betrag : b.art === 'Ausgabe' ? -b.betrag : null);
+  const sp = kk.spartopf;
+  const c24 = kk.konto.name;
+  const signiertAuf = (b, name) => (b.art === 'Einnahme' || b.art === 'Ausgabe' || b.art === UMBUCHUNG) && (b.konto === name || b.gegen === name) ? wirkungAuf(b, name) : null;
   return zeilen.map((z) => {
     if (ids.has(z.id)) return { z, status: 'importiert' };
+    const eigen = sp && aufSpartopf(z, sp) ? sp.name : c24;
+    // Pocket-Zeile, die eine Überweisung von/zum c24 spiegelt: steht schon als Umbuchung (oder kommt mit der c24-Zeile)
+    if (eigen !== c24) {
+      const spiegel = zeilen.some((y) => y !== z && !aufSpartopf(y, sp) && Math.abs(y.betrag + z.betrag) < 0.005 && Math.abs(tag(y.datum) - tag(z.datum)) <= 1)
+        || kk.buchungen.some((b) => b.art === UMBUCHUNG && b.datum && Math.abs(wirkungAuf(b, sp.name) - z.betrag) < 0.005 && Math.abs(tag(b.datum) - tag(z.datum)) <= 3);
+      if (spiegel) return { z, status: 'gegenbuchung' };
+    }
+    const signiert = (b) => signiertAuf(b, eigen);
     const kand = kk.buchungen.filter((b) => !benutzt.has(b) && !b.importId && signiert(b) != null && Math.abs(signiert(b) - z.betrag) < 0.005 && b.datum && Math.abs(tag(b.datum) - tag(z.datum)) <= 3);
     const csvGleich = kk.buchungen.filter((b) => b.importId && b.datum === z.datum && Math.abs(signiert(b) - z.betrag) < 0.005);
     const v = vorschlag(z, kk, opt);

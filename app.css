@@ -581,3 +581,27 @@ label.haken{display:flex;gap:12px;align-items:flex-start;cursor:pointer;padding:
 label.haken input{width:22px;height:22px;margin:1px 0 0;flex:none;accent-color:var(--akzent,var(--gem))}
 label.haken span{display:grid;gap:2px;font-size:15px;color:var(--ink);min-width:0}
 label.haken small{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+/* Kais Töpfe-Reiter und Spartopf (ab 0.11.0) */
+nav.sechs .wrap{grid-template-columns:repeat(6,1fr)}
+nav.sechs button{font-size:11px;padding:0 1px}
+nav.sechs button svg{width:22px;height:22px}
+.fuenf-seg{grid-template-columns:repeat(3,1fr)}
+.fuenf-seg span{font-size:13px !important;padding:9px 2px !important}
+.k-spar{margin:16px 0;padding:18px;border-radius:24px;background:radial-gradient(120% 90% at 100% 0,var(--himmel) 0,transparent 60%),linear-gradient(160deg,var(--neon),var(--neon-dunkel) 75%,#061647);color:#fff}
+.k-spar p{margin:8px 0 12px;opacity:.9}
+.k-spar-kopf{display:flex;justify-content:space-between;align-items:center;gap:8px;font-weight:600}
+.k-spar-kopf>span:first-child{opacity:.9}
+.k-spar .k-ampel:not(.gruen):not(.rot){background:rgba(255,255,255,.18);color:#fff}
+.k-spar .k-gross.neg{color:#FFD0CC}
+.k-toepfe{display:flex;flex-direction:column;gap:8px}
+.k-topf{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:10px;background:var(--surface);border-radius:16px;padding:12px 14px;width:100%;text-align:left;color:var(--ink)}
+.k-topf .n{font-weight:600;min-width:0}
+.k-topf .n small{display:block;font-weight:400;color:var(--muted);font-size:13px;margin-top:2px}
+.k-topf b{font-variant-numeric:tabular-nums}
+.k-topf .pfeil{color:var(--muted);font-size:20px;line-height:1}
+.k-topf:active{transform:scale(.99)}
+.k-topfkopf{display:flex;align-items:center;gap:8px;margin:14px 0 0}
+.k-topfkopf h2{margin:0}
+.k-zurueck{width:40px;height:40px;border-radius:999px;display:grid;place-items:center;background:var(--surface);color:var(--ink);flex:none}
+.bu-wrap.alt{opacity:.55}
+[hidden]{display:none !important}
