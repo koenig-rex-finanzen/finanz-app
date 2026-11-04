@@ -6,7 +6,7 @@ import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 import * as meins from './meins.js';
 
-const VERSION = '0.10.0';
+const VERSION = '0.10.1';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
