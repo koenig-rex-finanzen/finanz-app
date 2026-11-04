@@ -4,8 +4,9 @@ import { monatsansicht, monate, monatsname, monatPlus, monatsende, eur, AUSGLEIC
 import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
+import * as meins from './meins.js';
 
-const VERSION = '0.8.0';
+const VERSION = '0.9.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -52,7 +53,7 @@ async function loescheDatei() {
 }
 
 // ---------- Zustand
-const z = { modell: null, datei: null, monat: null, tab: holen('tab') || 'uebersicht', filter: 'alle', status: null, laedt: false, geprueft: 0,
+const z = { modell: null, datei: null, monat: null, bereich: holen('bereich') || 'gemeinsam', tab: holen('tab') || 'uebersicht', filter: 'alle', status: null, laedt: false, geprueft: 0,
   topf: null, zeitraum: '12', eigenVon: null, eigenBis: null, topfScroll: 0 };
 
 // ---------- Start
@@ -105,6 +106,7 @@ async function ausOneDrive({ immer = false } = {}) {
       return;
     }
     await ladeGefunden(gefunden, immer);
+    if (z.bereich === 'meins' && meins.verfuegbar()) meins.laden({ immer: true });
   } catch (e) {
     z.laedt = false;
     if (e instanceof od.AnmeldungNoetig) {
@@ -169,7 +171,14 @@ document.addEventListener('submit', async (ev) => {
   catch (e) { if (e instanceof od.AnmeldungNoetig) ms.anmelden(); else zeigeNichtGefunden(e.message); }
 });
 
+document.addEventListener('submit', async (ev) => {
+  if (!ev.target.id?.startsWith('m-')) return;
+  ev.preventDefault();
+  await meins.absenden(ev.target);
+});
+
 document.addEventListener('change', (ev) => {
+  if (ev.target.id === 'm-csv') { const f = ev.target.files?.[0]; ev.target.value = ''; if (f) meins.csvGewaehlt(f); return; }
   if (ev.target.id === 'topf-von') { z.eigenVon = ev.target.value; if (z.eigenBis && z.eigenBis < z.eigenVon) z.eigenBis = z.eigenVon; zeichne(); }
   if (ev.target.id === 'topf-bis') { z.eigenBis = ev.target.value; if (z.eigenVon && z.eigenVon > z.eigenBis) z.eigenVon = z.eigenBis; zeichne(); }
 });
@@ -198,19 +207,11 @@ dateiInput.addEventListener('change', async () => {
 function zeichne() {
   if (z.topf && !z.modell.toepfe.some((t) => t.name === z.topf)) z.topf = null;
   if (z.topf) { zeichneTopf(); return; }
+  if (z.bereich === 'meins' && meins.verfuegbar()) { meins.zeichne(); return; }
+  meins.thema(false);
   const v = monatsansicht(z.modell, z.monat, heute());
-  const liste = monate(z.modell);
-  const i = liste.indexOf(z.monat);
-  const [jahr] = z.monat.split('-');
   app.innerHTML = `
-  <header><div class="wrap"><div class="monat">
-    <button data-monat="${i > 0 ? liste[i - 1] : ''}" aria-label="Vorheriger Monat" ${i > 0 ? '' : 'disabled'}>${ICON.links}</button>
-    <div class="mitte"><h1>${h(v.name)} ${jahr}</h1><small>${v.laufend ? 'dieser Monat' : v.vergangen ? 'vorbei' : 'Vorschau'}</small></div>
-    <div style="display:flex">
-      <button data-monat="${i < liste.length - 1 ? liste[i + 1] : ''}" aria-label="Nächster Monat" ${i < liste.length - 1 ? '' : 'disabled'}>${ICON.rechts}</button>
-      <button class="menu" id="menu-knopf" aria-label="Datei und Einstellungen">${ICON.menu}</button>
-    </div>
-  </div></div></header>
+  ${kopf()}
   <main class="wrap">
     ${z.status ? `<div class="hinweis ${z.status.art}">${h(z.status.text)}${z.status.knopf ? ` <button class="link" id="${z.status.knopf[0]}">${h(z.status.knopf[1])}</button>` : ''}</div>` : ''}
     <div class="view ${z.tab === 'uebersicht' ? 'on' : ''}" role="tabpanel">${uebersicht(v)}</div>
@@ -221,6 +222,26 @@ function zeichne() {
   ${kannEintragen() ? `<button class="fab" id="eintragen-knopf" aria-label="Buchung eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>` : ''}
   <nav><div class="wrap" role="tablist">${TABS.map(([id, name, pfad]) =>
     `<button role="tab" aria-selected="${z.tab === id}" data-tab="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${pfad}</svg>${name}</button>`).join('')}</div></nav>`;
+}
+
+/** Kopf mit Monatswahl, Menü und (wenn angemeldet) Umschalter Gemeinsam/Meins. */
+function kopf() {
+  const liste = monate(z.modell);
+  const i = liste.indexOf(z.monat);
+  const [jahr] = z.monat.split('-');
+  const jetzt = heute().slice(0, 7);
+  const wann = z.monat === jetzt ? 'dieser Monat' : z.monat < jetzt ? 'vorbei' : 'Vorschau';
+  const umschalter = meins.verfuegbar() ? `<div class="bereich-wahl" role="tablist" aria-label="Bereich">
+      <button role="tab" aria-selected="${z.bereich !== 'meins'}" data-bereich="gemeinsam">Gemeinsam</button>
+      <button role="tab" aria-selected="${z.bereich === 'meins'}" data-bereich="meins">Meins</button></div>` : '';
+  return `<header><div class="wrap"><div class="monat">
+    <button data-monat="${i > 0 ? liste[i - 1] : ''}" aria-label="Vorheriger Monat" ${i > 0 ? '' : 'disabled'}>${ICON.links}</button>
+    <div class="mitte"><h1>${h(monatsname(z.monat))} ${jahr}</h1><small>${wann}</small></div>
+    <div style="display:flex">
+      <button data-monat="${i < liste.length - 1 ? liste[i + 1] : ''}" aria-label="Nächster Monat" ${i < liste.length - 1 ? '' : 'disabled'}>${ICON.rechts}</button>
+      <button class="menu" id="menu-knopf" aria-label="Datei und Einstellungen">${ICON.menu}</button>
+    </div>
+  </div>${umschalter}</div></header>`;
 }
 
 function kontoFarbe(name) {
@@ -723,6 +744,8 @@ document.addEventListener('click', async (ev) => {
   if (document.body.classList.contains('pc-modus')) return;
   const t = ev.target.closest('button, [data-monat]');
   if (!t) { if (ev.target === menu) menu.close(); return; }
+  if (t.dataset.bereich) { z.bereich = t.dataset.bereich; merken('bereich', z.bereich); zeichne(); window.scrollTo(0, 0); return; }
+  if (z.bereich === 'meins' && !z.topf && meins.verfuegbar() && await meins.klick(t)) return;
   if (t.dataset.monat) { z.monat = t.dataset.monat; zeichne(); window.scrollTo(0, 0); return; }
   if (t.dataset.tab) { z.tab = t.dataset.tab; merken('tab', z.tab); zeichne(); window.scrollTo(0, 0); return; }
   if (t.dataset.filter) { z.filter = t.dataset.filter; zeichne(); return; }
@@ -740,11 +763,12 @@ document.addEventListener('click', async (ev) => {
   if (t.id === 'schliessen') { menu.close(); return; }
   if (t.id === 'anmelden') { ms.anmelden({ konto: t.closest('.start') ? null : ms.gemerktesKonto() }); return; }
   if (t.id === 'aktualisieren') { if (menu.open) menu.close(); ausOneDrive({ immer: true }); return; }
-  if (t.id === 'abmelden') { ms.abmelden(); menu.close(); z.status = { art: 'info', text: 'Abgemeldet. Ihr seht den zuletzt geladenen Stand.' }; zeichne(); return; }
-  if (t.id === 'entfernen') { await loescheDatei(); ms.abmelden(); menu.close(); z.modell = null; z.datei = null; zeigeStart(); }
+  if (t.id === 'abmelden') { meins.vergessen(); ms.abmelden(); menu.close(); z.status = { art: 'info', text: 'Abgemeldet. Ihr seht den zuletzt geladenen Stand.' }; zeichne(); return; }
+  if (t.id === 'entfernen') { meins.vergessen(); await loescheDatei(); ms.abmelden(); menu.close(); z.modell = null; z.datei = null; zeigeStart(); }
 });
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+meins.init({ z, app, menu, h, heute, zeichne, ausOneDrive, zeigeEintragen, zeigeMenu, ms, od, kopf, version: VERSION });
 start();

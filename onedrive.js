@@ -295,3 +295,149 @@ export async function regelnSpeichern(item, regeln) {
   const inhalt = JSON.stringify({ hinweis: 'Zuordnungsregeln für den CSV-Import von „Unser Geld“. Wird vom PC-Tool gepflegt.', regeln }, null, 2);
   return graph(`/drives/${d}/items/${p}:/${encodeURIComponent(REGELN_DATEI)}:/content`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: inhalt });
 }
+
+// ---------------------------------------------------------------- Privater Bereich: eigene Datei
+// Ablage (so mit Kai und Natalie abgestimmt, 04.11.2026): ein Ordner mit dem Vornamen der Person unter
+// „Apps“ in Kais OneDrive (z. B. Documents/Apps/Natalie). Kai teilt den Ordner nur mit dieser Person.
+// Gefunden wird er im eigenen OneDrive (Kai) oder unter „Mit mir geteilt“ (Natalie).
+// Gibt es keinen solchen Ordner, nimmt die App einen eigenen, nicht geteilten Ordner im eigenen OneDrive.
+export const PRIVAT_DATEI = 'Mein-Bereich.json';
+export const PRIVAT_ERSATZ = 'Unser-Geld-Privat';
+export class Konflikt extends Error { constructor() { super('Die private Datei wurde gerade auf einem anderen Gerät geändert.'); } }
+
+async function rohAnfrage(pfad, opts = {}) {
+  let t;
+  try { t = await token(); } catch { throw new KeinNetz(); }
+  if (!t) throw new AnmeldungNoetig();
+  try { return await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, { cache: 'no-store', ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } }); }
+  catch { throw new KeinNetz(); }
+}
+
+const ordnerKey = (person) => 'ug.privatOrdner.' + person;
+/** Sucht den privaten Ordner einer Person. @returns {{driveId, itemId, name, quelle}|null} */
+export async function privatOrdnerFinden(person, { ersatz = false } = {}) {
+  try { const o = JSON.parse(localStorage.getItem(ordnerKey(person))); if (o?.driveId) { const it = await graph(`/drives/${o.driveId}/items/${o.itemId}?$select=id,name,folder`).catch(nurFehlend); if (it?.folder) return o; } } catch (e) { if (e instanceof AnmeldungNoetig || e instanceof KeinNetz) throw e; }
+  const merke = (o) => { try { localStorage.setItem(ordnerKey(person), JSON.stringify(o)); } catch {} return o; };
+  // 1. Eigenes OneDrive: …/Apps/<Person>
+  for (const p of ['Documents/Apps', 'Dokumente/Apps', 'Apps']) {
+    const it = await graph(`/me/drive/root:/${pfadKodiert(p + '/' + person)}?$select=id,name,folder,parentReference`).catch(nurFehlend);
+    if (it?.folder) return merke({ driveId: it.parentReference.driveId, itemId: it.id, name: it.name, quelle: 'eigen' });
+  }
+  // 2. Mit mir geteilt: Ordner mit dem Namen der Person
+  const geteilt = await graph('/me/drive/sharedWithMe').catch(nurFehlend);
+  for (const g of geteilt?.value || []) {
+    const ri = g.remoteItem || g;
+    if ((g.name || ri.name) === person && (ri.folder || g.folder) && ri.parentReference?.driveId) {
+      return merke({ driveId: ri.parentReference.driveId, itemId: ri.id, name: person, quelle: 'geteilt' });
+    }
+  }
+  if (!ersatz) return null;
+  // 3. Ersatz (nur auf Wunsch): eigener, nicht geteilter Ordner
+  let it = await graph(`/me/drive/root:/${PRIVAT_ERSATZ}?$select=id,name,folder,parentReference`).catch(nurFehlend);
+  if (!it) {
+    it = await graph('/me/drive/root/children', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: PRIVAT_ERSATZ, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }) });
+  }
+  return merke({ driveId: it.parentReference.driveId, itemId: it.id, name: it.name, quelle: 'ersatz' });
+}
+export const privatOrdnerVergessen = (person) => { try { localStorage.removeItem(ordnerKey(person)); } catch {} };
+
+/** Lädt die private Datei aus dem Ordner. null = gibt es noch nicht. */
+export async function privatLaden(ordner) {
+  const it = await graph(`/drives/${ordner.driveId}/items/${ordner.itemId}:/${encodeURIComponent(PRIVAT_DATEI)}?$select=id,eTag,webUrl,parentReference`);
+  if (!it?.id) return null;
+  const r = await rohAnfrage(`/drives/${ordner.driveId}/items/${it.id}/content`);
+  if (r.status === 401) throw new AnmeldungNoetig();
+  if (!r.ok) throw new Error(`Die private Datei konnte nicht geladen werden (${r.status}).`);
+  const daten = await r.json().catch(() => { throw new Error('Die private Datei ist beschädigt (kein gültiges JSON).'); });
+  return { daten, eTag: it.eTag, id: it.id, driveId: ordner.driveId, webUrl: it.webUrl };
+}
+
+/** Legt die private Datei im Ordner an (bricht ab, wenn es sie schon gibt). */
+export async function privatAnlegen(ordner, daten) {
+  const r = await rohAnfrage(`/drives/${ordner.driveId}/items/${ordner.itemId}:/${encodeURIComponent(PRIVAT_DATEI)}:/content?@microsoft.graph.conflictBehavior=fail`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(daten, null, 2) });
+  if (r.status === 401) throw new AnmeldungNoetig();
+  if (r.status === 409) throw new Konflikt();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(r.status === 403 ? 'Kein Schreibrecht im Ordner. Ist der Ordner mit „Kann bearbeiten“ geteilt?' : j.error?.message || `Anlegen fehlgeschlagen (${r.status})`);
+  return { id: j.id, eTag: j.eTag, driveId: ordner.driveId, webUrl: j.webUrl };
+}
+
+/** Speichert die private Datei, nur wenn sie seit dem Laden nicht verändert wurde (If-Match). */
+export async function privatSpeichern(akt, daten) {
+  const r = await rohAnfrage(`/drives/${akt.driveId}/items/${akt.id}/content`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': akt.eTag }, body: JSON.stringify(daten, null, 2) });
+  if (r.status === 401) throw new AnmeldungNoetig();
+  if (r.status === 412) throw new Konflikt();
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error?.message || `Speichern fehlgeschlagen (${r.status})`);
+  return { id: j.id, eTag: j.eTag, driveId: akt.driveId, webUrl: j.webUrl };
+}
+
+/** Liegt die gemeinsame Datei im eigenen OneDrive (also: bin ich der Besitzer)? */
+export async function besitzerDerDatei(ort) {
+  const d = await graph('/me/drive?$select=id').catch(nurFehlend);
+  return Boolean(d?.id && ort?.driveId && d.id.toLowerCase() === ort.driveId.toLowerCase());
+}
+
+// ---------------------------------------------------------------- Töpfe in der gemeinsamen Datei ändern
+// Blatt „Töpfe“ (Tabelle tblToepfe): A Topf, B Konto, C Bereich, D Sparrate / Monat, G Anfangsbestand, H Stichtag, L Bemerkung.
+// E, F, I, J, K sind Formeln und werden nie beschrieben.
+async function topfZeilen(api) {
+  const t = await api.tabelle('tblToepfe');
+  const m = t.address.match(/!([A-Z]+)(\d+):([A-Z]+)(\d+)/);
+  const erste = Number(m[2]) + 1, letzte = Number(m[4]);
+  const a = await api.lies('Töpfe', `A${erste}:A${letzte}`);
+  return { erste, letzte, namen: a.values.map((r) => String(r[0] ?? '').trim()) };
+}
+
+/**
+ * Ändert einen Topf: Name, Sparrate, Bemerkung. Beim Umbenennen werden auch alle Buchungen und Kosten
+ * mit dem alten Namen umgestellt, damit Stand und Auswahllisten stimmen.
+ */
+export function topfAendern(ort, alterName, { name, sparrate, bemerkung }) {
+  return mitSitzung(ort, async (api) => {
+    const { erste, namen } = await topfZeilen(api);
+    const i = namen.indexOf(alterName);
+    if (i < 0) throw new Error(`Topf „${alterName}“ wurde im Blatt „Töpfe“ nicht gefunden.`);
+    const z = erste + i;
+    const neu = (name || '').trim();
+    if (neu && neu !== alterName && namen.includes(neu)) throw new Error(`Einen Topf „${neu}“ gibt es schon.`);
+    if (sparrate != null) await api.schreib('Töpfe', `D${z}`, [[Number(sparrate)]]);
+    if (bemerkung != null) await api.schreib('Töpfe', `L${z}`, [[bemerkung]]);
+    let umgestellt = 0;
+    if (neu && neu !== alterName) {
+      await api.schreib('Töpfe', `A${z}`, [[neu]]);
+      for (const [blatt, tab] of [['Buchungen', 'tblBuchungen'], ['Kosten', 'tblKosten']]) {
+        const t = await api.tabelle(tab);
+        const m = t.address.match(/!([A-Z]+)(\d+):([A-Z]+)(\d+)/);
+        const e = Number(m[2]) + 1, l = Number(m[4]);
+        const j = await api.lies(blatt, `J${e}:J${l}`);
+        for (let k = 0; k < j.values.length; k++) {
+          if (String(j.values[k][0] ?? '').trim() === alterName) { await api.schreib(blatt, `J${e + k}`, [[neu]]); umgestellt++; }
+        }
+      }
+    }
+    const k = await api.lies('Töpfe', `A${z}:D${z}`);
+    if (String(k.values[0][0]).trim() !== (neu || alterName)) throw new Error('Die Änderung wurde nicht wie erwartet gespeichert. Bitte in Excel prüfen.');
+    return { zeile: z, umgestellt };
+  });
+}
+
+/** Legt einen neuen Topf in der ersten freien Zeile der Tabelle „Töpfe“ an (Formeln sind dort schon vorbereitet). */
+export function topfNeu(ort, { name, konto, bereich, sparrate, bemerkung, stichtag }) {
+  return mitSitzung(ort, async (api) => {
+    const { erste, namen } = await topfZeilen(api);
+    if (namen.includes(name.trim())) throw new Error(`Einen Topf „${name.trim()}“ gibt es schon.`);
+    const i = namen.findIndex((n, k) => !n && namen.slice(k).every((x) => !x || x === 'Summe'));
+    if (i < 0 || namen[i] === 'Summe') throw new Error('Im Blatt „Töpfe“ ist keine Zeile mehr frei. Bitte in Excel die Tabelle verlängern.');
+    const z = erste + i;
+    await api.schreib('Töpfe', `A${z}:D${z}`, [[name.trim(), konto, bereich || '', Number(sparrate) || 0]]);
+    await api.schreib('Töpfe', `G${z}:H${z}`, [[0, serialVon(stichtag)]]);
+    if (bemerkung) await api.schreib('Töpfe', `L${z}`, [[bemerkung]]);
+    const k = await api.lies('Töpfe', `A${z}`);
+    if (String(k.values[0][0]).trim() !== name.trim()) throw new Error('Der Topf wurde nicht wie erwartet angelegt. Bitte in Excel prüfen.');
+    return { zeile: z };
+  });
+}
