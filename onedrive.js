@@ -7,6 +7,10 @@ const FELDER = 'id,name,eTag,size,lastModifiedDateTime,lastModifiedBy,parentRefe
 
 export class AnmeldungNoetig extends Error { constructor() { super('Bitte bei Microsoft anmelden.'); } }
 export class KeinNetz extends Error { constructor() { super('Keine Verbindung zu OneDrive.'); } }
+/** Beim Eintragen gefunden: dieselbe Buchung (Art, Datum, Betrag, Von, Nach) steht schon in der Datei. */
+export class Doppelt extends Error {
+  constructor(treffer) { super('Diese Buchung steht schon in der Datei.'); this.treffer = treffer; }
+}
 // Bei der Suche: „nicht da“ ist okay, aber Anmeldung/Netz-Probleme müssen durchgereicht werden
 const nurFehlend = (e) => { if (e instanceof AnmeldungNoetig || e instanceof KeinNetz) throw e; return null; };
 
@@ -111,7 +115,7 @@ export async function herunterladen(ort) {
  * @param {object} b  { datum:'JJJJ-MM-TT', giltFuer:'JJJJ-MM', art, von, nach, betrag, bereich, posten, topf, beschreibung, kommentar, gezahltVon }
  * @returns {Promise<{nr:string, zeile:number}>}
  */
-export async function buchungEintragen(ort, b) {
+export async function buchungEintragen(ort, b, { trotzdem = false } = {}) {
   const W = `/drives/${ort.driveId}/items/${ort.itemId}/workbook`;
   const json = (o) => ({ ...o, headers: { 'Content-Type': 'application/json', ...(o.headers || {}) } });
   const sitzung = await graph(W + '/createSession', json({ method: 'POST', body: JSON.stringify({ persistChanges: true }) }));
@@ -122,12 +126,20 @@ export async function buchungEintragen(ort, b) {
     if (!tab) throw new Error('Tabelle „Buchungen“ nicht gefunden.');
     const m = tab.address.match(/!([A-Z]+)(\d+):([A-Z]+)(\d+)/);
     const erste = Number(m[2]) + 1, letzte = Number(m[4]);
-    const spA = await graph(W + `/worksheets('Buchungen')/range(address='A${erste}:A${letzte}')?$select=values`, { headers: S });
+    const spA = await graph(W + `/worksheets('Buchungen')/range(address='A${erste}:I${letzte}')?$select=values`, { headers: S });
     const nummern = spA.values.map((r) => String(r[0] ?? '')).filter((x) => /^B\d+$/.test(x)).map((x) => Number(x.slice(1)));
     const frei = spA.values.findIndex((r) => r[0] === '' || r[0] == null);
     const nr = 'B' + String((nummern.length ? Math.max(...nummern) : 0) + 1).padStart(4, '0');
     let zeile;
     const serial = (iso) => { const [y, mo, d] = iso.split('-').map(Number); return (Date.UTC(y, mo - 1, d) - Date.UTC(1899, 11, 30)) / 86400000; };
+    // Dieselbe Buchung schon da? Geprüft wird in der Datei selbst, nicht in der (evtl. veralteten) Anzeige.
+    if (!trotzdem) {
+      const treffer = spA.values.filter((r) => /^B\d+$/.test(String(r[0] ?? ''))
+        && Math.round(Number(r[1])) === serial(b.datum) && String(r[3]) === b.art && String(r[4]) === b.von && String(r[5]) === b.nach
+        && Math.abs(Number(r[6]) - Number(b.betrag)) < 0.005)
+        .map((r) => ({ nr: String(r[0]), posten: String(r[8] ?? '') }));
+      if (treffer.length) throw new Doppelt(treffer);
+    }
     const werteAN = [nr, serial(b.datum), serial(b.giltFuer + '-01'), b.art, b.von, b.nach, Number(b.betrag), b.bereich || '',
       b.posten || '', b.topf || '', b.beschreibung || '', b.kommentar || '', 'manuell', ''];
     if (frei >= 0) {
@@ -244,6 +256,8 @@ export function buchungAendern(ort, nr, b) {
     await api.schreib('Buchungen', `B${z}:L${z}`, [[serialVon(b.datum), serialVon(b.giltFuer + '-01'), b.art, b.von, b.nach, Number(b.betrag),
       b.bereich || '', b.posten || '', b.topf || '', b.beschreibung || '', b.kommentar || '']]);
     await api.schreib('Buchungen', `P${z}`, [[b.gezahltVon || '']]);
+    const k = await api.lies('Buchungen', `A${z}:G${z}`);
+    if (k?.values?.[0]?.[0] !== nr || Math.abs(Number(k.values[0][6]) - Number(b.betrag)) >= 0.005) throw new Error('Die Änderung wurde nicht wie erwartet gespeichert. Bitte in Excel prüfen.');
     return z;
   });
 }
@@ -265,8 +279,25 @@ export function buchungLoeschen(ort, nr) {
     const z = await zeileVon(api, nr);
     await api.schreib('Buchungen', `A${z}:N${z}`, [Array(14).fill('')]);
     await api.schreib('Buchungen', `P${z}`, [['']]);
+    const k = await api.lies('Buchungen', `A${z}`);
+    if (String(k?.values?.[0]?.[0] ?? '') !== '') throw new Error('Das Löschen wurde nicht wie erwartet gespeichert. Bitte in Excel prüfen.');
     return z;
   });
+}
+
+/**
+ * Nach dem Schreiben über eine Excel-Sitzung liefert OneDrive die Datei manchmal noch einige Sekunden
+ * im alten Stand aus. Wartet, bis sich die Version (eTag) gegenüber `alterETag` geändert hat.
+ * @returns {Promise<object|null>} neue Metadaten, oder null, wenn sich nach `max` ms nichts geändert hat
+ */
+export async function aufNeueVersionWarten(ort, alterETag, { max = 45000, abstand = 2500 } = {}) {
+  const ende = Date.now() + max;
+  for (;;) {
+    const it = await info(ort).catch(nurFehlend);
+    if (it?.eTag && it.eTag !== alterETag) return it;
+    if (Date.now() + abstand > ende) return null;
+    await new Promise((r) => setTimeout(r, abstand));
+  }
 }
 
 /** Trägt den Kontostand laut Bank zum Monatsende ins Blatt „Kontostände“ ein. */

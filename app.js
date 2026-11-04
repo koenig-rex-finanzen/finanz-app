@@ -7,7 +7,7 @@ import { verstehen } from './kern/verstehen.js';
 import * as meins from './meins.js';
 import * as hilfe from './hilfe.js';
 
-const VERSION = '0.12.1';
+const VERSION = '0.13.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -53,6 +53,37 @@ async function loescheDatei() {
   try { const d = await db(); await new Promise((ok) => { const t = d.transaction('dateien', 'readwrite'); t.objectStore('dateien').delete('aktuell'); t.oncomplete = ok; t.onerror = ok; }); } catch {}
 }
 
+// ---------- Gespeichert, aber von OneDrive noch nicht ausgeliefert
+// Nach dem Schreiben über eine Excel-Sitzung liefert OneDrive die Datei oft noch einige Sekunden im alten Stand.
+// Damit die Liste trotzdem sofort stimmt (und niemand dieselbe Buchung noch einmal einträgt), merkt sich die App
+// ihre eigenen Änderungen und legt sie über den geladenen Stand, bis die Datei sie selbst enthält (höchstens 10 Min.).
+const AUSSTEHEND_MAX = 10 * 60 * 1000;
+let ausstehend = (() => { try { return (JSON.parse(holen('ausstehend')) || []).filter((a) => Date.now() - a.seit < AUSSTEHEND_MAX); } catch { return []; } })();
+const ausstehendMerken = () => merken('ausstehend', JSON.stringify(ausstehend));
+const gleicheBuchung = (x, b) => x.datum === b.datum && x.posten === b.posten && x.von === b.von && x.nach === b.nach
+  && Math.abs(Number(x.betrag) - Number(b.betrag)) < 0.005 && String(x.gezahltVon || '') === String(b.gezahltVon || '');
+/** Legt die noch nicht ausgelieferten eigenen Änderungen über eine Buchungsliste. Erledigte fallen weg. */
+function ausstehendAnwenden(liste) {
+  ausstehend = ausstehend.filter((a) => {
+    if (Date.now() - a.seit > AUSSTEHEND_MAX) return false;
+    const x = liste.find((b) => b.nr === a.nr);
+    return a.typ === 'loeschen' ? Boolean(x) : !(x && gleicheBuchung(x, a.b));
+  });
+  ausstehendMerken();
+  let l = liste.slice();
+  for (const a of ausstehend) {
+    const i = l.findIndex((b) => b.nr === a.nr);
+    if (a.typ === 'loeschen') { if (i >= 0) l.splice(i, 1); }
+    else if (i >= 0) l[i] = a.b; else l.push(a.b);
+  }
+  return l;
+}
+let nachpruefTimer = null;
+function nachpruefenPlanen() {
+  if (!ausstehend.length || nachpruefTimer) return;
+  nachpruefTimer = setTimeout(() => { nachpruefTimer = null; ausOneDrive({ immer: true }); }, 6000);
+}
+
 // ---------- Zustand
 const z = { modell: null, datei: null, monat: null, bereich: holen('bereich') || 'gemeinsam', tab: holen('tab') || 'uebersicht', filter: 'alle', status: null, laedt: false, geprueft: 0,
   topf: null, zeitraum: '12', eigenVon: null, eigenBis: null, topfScroll: 0 };
@@ -91,17 +122,22 @@ async function start() {
 
 async function uebernehmen(eintrag, speichern) {
   const modell = await leseBuchhaltung(eintrag.bytes);
+  modell.buchungen = ausstehendAnwenden(modell.buchungen);
   z.modell = modell; z.datei = eintrag;
   const liste = monate(modell);
   const jetzt = heute().slice(0, 7);
   if (!z.monat || !liste.includes(z.monat)) z.monat = liste.includes(jetzt) ? jetzt : (liste.find((m) => m > jetzt) || liste[liste.length - 1]);
   if (speichern) await speichereDatei(eintrag);
   zeichne();
+  nachpruefenPlanen();
 }
 
-/** Lädt die Datei aus OneDrive, wenn sie sich geändert hat. */
+/** Lädt die Datei aus OneDrive, wenn sie sich geändert hat. Läuft schon ein Laden, wird danach noch einmal geladen. */
 async function ausOneDrive({ immer = false } = {}) {
-  if (z.laedt) return;
+  if (z.laedt) { z.nochmal = true; return; }
+  do { z.nochmal = false; await einmalAusOneDrive({ immer: immer || z.nochmal }); } while (z.nochmal);
+}
+async function einmalAusOneDrive({ immer = false } = {}) {
   z.laedt = true; z.geprueft = Date.now();
   if (z.modell) { z.status = { art: 'info', text: 'Prüfe OneDrive auf Änderungen …' }; zeichne(); }
   try {
@@ -509,13 +545,13 @@ function buchungen(v) {
       const sign = b.art === 'Einnahme' ? '+' : b.art === 'Ausgabe' ? '−' : '';
       const andererMonat = b.giltFuer && b.giltFuer !== v.monat;
       const dl = details(b);
-      const aktion = kannEintragen() ? `<div class="bu-aktion">${istAusgleich(b)
+      const aktion = kannEintragen() ? `<div class="bu-aktion"><button class="knopf leise klein" data-bearbeiten="${h(b.nr)}">Bearbeiten</button><button class="knopf leise klein" data-loeschen-frage="${h(b.nr)}">Löschen</button>${istAusgleich(b)
         ? `<button class="knopf leise klein" data-ausgleich="" data-nr="${h(b.nr)}">Ausgleich aufheben, wieder anrechnen</button>`
         : `<button class="knopf leise klein" data-ausgleich-frage="${h(b.nr)}">Als Ausgleich markieren</button>`}</div>` : '';
       return `<div class="bu-wrap"><button class="bu" aria-expanded="false"><span class="t">${h(b.posten || b.beschreibung)}${istAusgleich(b) ? ' <span class="chip ausgleich">Ausgleich</span>' : ''}</span><span class="betrag ${b.art === 'Einnahme' ? 'plus' : ''}">${sign}${eur(b.betrag)}</span>
         <span class="r">${datumKurz(b.datum)} <span class="chip ${kontoFarbe(b.von)}">${h(b.von)}</span>${ICON.pfeil}<span class="chip ${kontoFarbe(b.nach)}">${h(b.nach)}</span>${andererMonat ? `<span class="okt">gilt für ${h(monatsname(b.giltFuer))}</span>` : ''}</span>
         <span class="more"><dl>${dl}</dl></span></button>${aktion}</div>`;
-    }).join('')}</div><p class="hint" style="margin-top:10px">Antippen zeigt Details und Kommentar.</p>`
+    }).join('')}</div><p class="hint" style="margin-top:10px">Antippen zeigt Details und Kommentar${kannEintragen() ? ', dort auch Bearbeiten und Löschen' : ''}.</p>`
       : `<div class="leer">${z.filter === 'alle' ? `Für ${h(v.name)} ist noch nichts gebucht.` : 'Keine Buchungen dieser Art in diesem Monat.'}</div>`}
   </section>`;
 }
@@ -574,17 +610,26 @@ function zeigeEintragen(fehler, vorher) {
   const toepfe = ['Sparplan (verteilt)', ...m.toepfe.map((t) => t.name)];
   const postenListe = [...new Set([...m.kosten.map((k) => k.posten), ...m.einnahmen.map((e) => e.posten), ...m.buchungen.map((b) => b.posten)].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'de'));
   const v = vorher || { art: 'Ausgabe', datum: h0, giltFuer: z.monat && z.monat >= vormonat ? (h0.slice(0, 7) === z.monat ? z.monat : z.monat) : h0.slice(0, 7), ...STANDARD.Ausgabe(kn), bereich: '', topf: '', posten: '', betrag: '', beschreibung: '', kommentar: '', gezahltVon: '' };
+  const bearbeiten = Boolean(v.nr);
+  const dazu = (liste, wert) => (wert && !liste.includes(wert) ? [...liste, wert] : liste);
+  const kontenAuswahl = dazu(dazu(konten, v.von), v.nach);
+  const bereiche = dazu(m.listen?.bereiche || [], v.bereich);
+  const toepfeAuswahl = dazu(toepfe, v.topf);
+  if (v.giltFuer && !monateAuswahl.includes(v.giltFuer)) { monateAuswahl.push(v.giltFuer); monateAuswahl.sort(); }
+  const doppelt = v.doppelt?.length ? `<div class="hinweis warn"><b>Das steht schon drin:</b> ${v.doppelt.map((t) => `${h(t.nr)} ${h(t.posten)}`).join(', ')} – gleicher Tag, gleicher Betrag, gleiche Konten.
+      Wenn es wirklich ein zweites Mal war, auf „Trotzdem eintragen“ tippen. Sonst „Abbrechen“.</div><input type="hidden" name="trotzdem" value="1">` : '';
   const ausgleichAn = v.ausgleich === 'on' || istAusgleich(v);
   const grund = v.grund || (istAusgleich(v) ? (/topf/i.test(v.gezahltVon) ? 'topf' : 'korrektur') : '');
   const opt = (liste, wert, leer) => (leer ? `<option value="">${leer}</option>` : '') + liste.map((x) => `<option value="${h(x)}" ${x === wert ? 'selected' : ''}>${h(x)}</option>`).join('');
   menu.innerHTML = `<form id="eintragen-form" novalidate>
-    <h2 id="menu-titel">Buchung eintragen</h2>
-    <div class="sprechen">
+    <h2 id="menu-titel">${bearbeiten ? `${h(v.nr)} ändern` : 'Buchung eintragen'}</h2>
+    ${bearbeiten ? `<input type="hidden" name="nr" value="${h(v.nr)}">` : ''}
+    <div class="sprechen" ${bearbeiten ? 'hidden' : ''}>
       ${SR ? `<button type="button" class="mikro" id="mikro" aria-label="Sprechen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>` : ''}
       <input name="satz" id="satz" autocomplete="off" enterkeyhint="done" placeholder="${SR ? 'Sprechen oder schreiben, z. B. „12,50 Bäckerei mit der Visa“' : 'Schreiben oder per Tastatur-Mikrofon diktieren'}">
       <button type="button" class="knopf leise klein" id="satz-los">Übernehmen</button>
     </div>
-    <p class="erkannt" id="erkannt" aria-live="polite"></p>
+    <p class="erkannt" id="erkannt" aria-live="polite" ${bearbeiten ? 'hidden' : ''}></p>
     <div class="seg" role="radiogroup" aria-label="Art">${['Ausgabe', 'Einnahme', 'Umbuchung'].map((a) =>
       `<label><input type="radio" name="art" value="${a}" ${v.art === a ? 'checked' : ''}><span>${a}</span></label>`).join('')}</div>
     <label class="feld"><span>Betrag in €</span><input name="betrag" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${h(v.betrag)}" required></label>
@@ -595,11 +640,11 @@ function zeigeEintragen(fehler, vorher) {
       <label class="feld"><span>Gilt für</span><select name="giltFuer">${monateAuswahl.map((mo) => `<option value="${mo}" ${mo === v.giltFuer ? 'selected' : ''}>${monatsname(mo, true)}</option>`).join('')}</select></label>
     </div>
     <div class="zwei">
-      <label class="feld"><span>Von</span><select name="von">${opt(konten, v.von)}</select></label>
-      <label class="feld"><span>Nach</span><select name="nach">${opt(konten, v.nach)}</select></label>
+      <label class="feld"><span>Von</span><select name="von">${opt(kontenAuswahl, v.von)}</select></label>
+      <label class="feld"><span>Nach</span><select name="nach">${opt(kontenAuswahl, v.nach)}</select></label>
     </div>
-    <label class="feld"><span>Bereich</span><select name="bereich">${opt(m.listen?.bereiche || [], v.bereich, 'bitte wählen')}</select></label>
-    <label class="feld"><span>Topf <small>(nur wenn Geld aufs Tagesgeld geht oder von dort kommt)</small></span><select name="topf">${opt(toepfe, v.topf, 'kein Topf')}</select></label>
+    <label class="feld"><span>Bereich</span><select name="bereich">${opt(bereiche, v.bereich, 'bitte wählen')}</select></label>
+    <label class="feld"><span>Topf <small>(nur wenn Geld aufs Tagesgeld geht oder von dort kommt)</small></span><select name="topf">${opt(toepfeAuswahl, v.topf, 'kein Topf')}</select></label>
     <label class="feld"><span>Verwendungszweck <small>(optional)</small></span><input name="beschreibung" autocomplete="off" value="${h(v.beschreibung)}"></label>
     <label class="feld"><span>Kommentar <small>(optional)</small></span><input name="kommentar" autocomplete="off" value="${h(v.kommentar)}"></label>
     <label class="feld" id="gezahlt-feld" ${ausgleichAn ? 'hidden' : ''}><span>Gezahlt von <small>(nur wenn es nicht vom eigenen Konto kommt, z. B. Elterngeld)</small></span><select name="gezahltVon">${opt(['Kai', 'Natalie'], istAusgleich(v) ? '' : v.gezahltVon, '–')}</select></label>
@@ -611,8 +656,9 @@ function zeigeEintragen(fehler, vorher) {
       </div>
     </div>
     <p class="zusammen" id="zusammen"></p>
+    ${doppelt}
     ${fehler ? `<p class="fehler">${h(fehler)}</p>` : ''}
-    <div class="knoepfe"><button class="knopf" type="submit" id="eintragen-los">Eintragen</button><button class="knopf leise" type="button" id="schliessen">Abbrechen</button></div>
+    <div class="knoepfe"><button class="knopf" type="submit" id="eintragen-los">${bearbeiten ? 'Speichern' : doppelt ? 'Trotzdem eintragen' : 'Eintragen'}</button><button class="knopf leise" type="button" id="schliessen">Abbrechen</button></div>
   </form>`;
   const form = document.getElementById('eintragen-form');
   const zusammen = () => {
@@ -682,9 +728,25 @@ function zeigeEintragen(fehler, vorher) {
   if (!menu.open) menu.showModal();
 }
 
+/** Nach erfolgreichem Schreiben: Änderung sofort anzeigen, dann warten, bis OneDrive die neue Version liefert, und neu laden. */
+async function nachDemSchreiben(aenderung, text) {
+  const vorher = z.datei?.eTag;
+  ausstehend.push({ ...aenderung, seit: Date.now() }); ausstehendMerken();
+  z.modell.buchungen = ausstehendAnwenden(z.modell.buchungen);
+  z.status = { art: 'info', text }; zeichne();
+  await od.aufNeueVersionWarten(od.aktuellerOrt(), vorher).catch(() => null);
+  await ausOneDrive({ immer: true });
+  z.status = { art: 'info', text }; zeichne();
+}
+const schreibFehler = (e, nichts = 'Es wurde nichts gespeichert') => (e instanceof od.AnmeldungNoetig ? `Die Anmeldung ist abgelaufen. Bitte im Menü neu anmelden. ${nichts}.`
+  : e instanceof od.KeinNetz ? `Gerade keine Verbindung zu OneDrive. ${nichts}, bitte gleich noch einmal versuchen.`
+    : /423|locked|gesperrt/i.test(e.message) ? 'Die Datei ist gerade in Excel geöffnet und gesperrt. Bitte dort schließen und noch einmal versuchen.'
+      : 'Das hat nicht geklappt: ' + e.message + ' Bitte in Excel nachsehen, bevor ihr es noch einmal versucht.');
+
 document.addEventListener('submit', async (ev) => {
   if (ev.target.id !== 'eintragen-form') return;
   ev.preventDefault();
+  if (z.schreibt) return;
   const form = ev.target;
   const d = Object.fromEntries(new FormData(form));
   const betrag = betragLesen(d.betrag);
@@ -695,23 +757,63 @@ document.addEventListener('submit', async (ev) => {
           : !d.bereich ? 'Bitte einen Bereich wählen.'
             : d.ausgleich && !d.grund ? 'Bitte beim Ausgleich den Grund wählen.' : null;
   if (fehler) { zeigeEintragen(fehler, d); return; }
-  const knopf = document.getElementById('eintragen-los');
-  knopf.disabled = true; knopf.textContent = 'Wird eingetragen …';
-  try {
-    const gezahltVon = d.ausgleich ? AUSGLEICH[d.grund] : d.gezahltVon;
-    const { nr } = await od.buchungEintragen(od.aktuellerOrt(), { ...d, gezahltVon, betrag, posten: d.posten.trim() });
-    menu.close();
-    z.status = { art: 'info', text: `${nr} eingetragen: ${d.posten.trim()}, ${eur(betrag)}.` };
-    zeichne();
-    await ausOneDrive({ immer: true });
-    z.status = { art: 'info', text: `${nr} eingetragen: ${d.posten.trim()}, ${eur(betrag)}.` };
-    zeichne();
-  } catch (e) {
-    if (e instanceof od.AnmeldungNoetig) { zeigeEintragen('Die Anmeldung ist abgelaufen. Bitte im Menü neu anmelden, dann noch einmal eintragen.', d); return; }
-    if (e instanceof od.KeinNetz) { zeigeEintragen('Gerade keine Verbindung zu OneDrive. Es wurde nichts eingetragen, bitte gleich noch einmal versuchen.', d); return; }
-    zeigeEintragen('Das Eintragen hat nicht geklappt: ' + e.message + ' Es wurde nichts doppelt gespeichert; bitte in Excel nachsehen, bevor ihr es noch einmal versucht.', d);
+  const alt = d.nr ? z.modell.buchungen.find((x) => x.nr === d.nr) : null;
+  if (d.nr && !alt) { zeigeEintragen(`${d.nr} gibt es nicht mehr. Bitte die Liste neu laden.`, d); return; }
+  const gezahltVon = d.ausgleich ? AUSGLEICH[d.grund] : (d.gezahltVon || '');
+  const posten = d.posten.trim();
+  const daten = { datum: d.datum, giltFuer: d.giltFuer, art: d.art, von: d.von, nach: d.nach, betrag, bereich: d.bereich, posten, topf: d.topf || '',
+    beschreibung: d.beschreibung || '', kommentar: d.kommentar || '', gezahltVon };
+  // Schon in der Anzeige vorhanden? (Die Datei selbst wird beim Speichern noch einmal geprüft.)
+  if (!alt && !d.trotzdem) {
+    const treffer = z.modell.buchungen.filter((b) => b.datum === d.datum && b.art === d.art && b.von === d.von && b.nach === d.nach && Math.abs(b.betrag - betrag) < 0.005);
+    if (treffer.length) { zeigeEintragen(null, { ...d, doppelt: treffer.map((b) => ({ nr: b.nr, posten: b.posten })) }); return; }
   }
+  const knopf = document.getElementById('eintragen-los');
+  knopf.disabled = true; knopf.textContent = alt ? 'Wird gespeichert …' : 'Wird eingetragen …';
+  z.schreibt = true;
+  let nr;
+  try {
+    if (alt) { await od.buchungAendern(od.aktuellerOrt(), alt.nr, daten); nr = alt.nr; }
+    else ({ nr } = await od.buchungEintragen(od.aktuellerOrt(), daten, { trotzdem: Boolean(d.trotzdem) }));
+  } catch (e) {
+    z.schreibt = false;
+    if (e instanceof od.Doppelt) { zeigeEintragen(null, { ...d, doppelt: e.treffer }); return; }
+    zeigeEintragen(schreibFehler(e), d);
+    return;
+  }
+  z.schreibt = false;
+  menu.close();
+  const b = { ...(alt || { quelle: 'manuell', importId: '', excelZuordnung: '' }), ...daten, nr };
+  await nachDemSchreiben({ typ: alt ? 'aendern' : 'neu', nr, b }, alt ? `${nr} geändert: ${posten}, ${eur(betrag)}.` : `${nr} eingetragen: ${posten}, ${eur(betrag)}.`);
 });
+
+// ---------- Buchung bearbeiten / löschen
+function zeigeBearbeiten(nr) {
+  const b = z.modell.buchungen.find((x) => x.nr === nr);
+  if (!b) return;
+  zeigeEintragen(null, { ...b, betrag: b.betrag.toFixed(2).replace('.', ','), ausgleich: istAusgleich(b) ? 'on' : '' });
+}
+function zeigeLoeschen(nr, fehler) {
+  const b = z.modell.buchungen.find((x) => x.nr === nr);
+  if (!b) return;
+  menu.innerHTML = `<h2 id="menu-titel">${h(nr)} löschen?</h2>
+    <p class="ausgleich-was"><b>${h(b.posten || b.beschreibung)}</b>, ${eur(b.betrag)}<br><span class="hint">${datumKurz(b.datum)} ${h(b.von)} → ${h(b.nach)}</span></p>
+    <p class="hint">Die Buchung wird aus der Datei entfernt. Rückgängig machen geht nur, indem man sie neu einträgt.${b.importId ? ' Sie kam aus dem Kontoauszug: Beim nächsten Abgleich wird die Bankzeile wieder als „neu“ angeboten.' : ''}</p>
+    ${fehler ? `<p class="fehler">${h(fehler)}</p>` : ''}
+    <div class="knoepfe"><button class="knopf" data-loeschen="${h(nr)}">Ja, löschen</button><button class="knopf leise" id="schliessen">Abbrechen</button></div>`;
+  if (!menu.open) menu.showModal();
+}
+async function loeschen(nr, knopf) {
+  const b = z.modell.buchungen.find((x) => x.nr === nr);
+  if (!b || z.schreibt) return;
+  knopf.disabled = true; knopf.textContent = 'Wird gelöscht …';
+  z.schreibt = true;
+  try { await od.buchungLoeschen(od.aktuellerOrt(), nr); }
+  catch (e) { z.schreibt = false; zeigeLoeschen(nr, schreibFehler(e, 'Es wurde nichts gelöscht')); return; }
+  z.schreibt = false;
+  menu.close();
+  await nachDemSchreiben({ typ: 'loeschen', nr, b }, `${nr} gelöscht: ${b.posten || b.beschreibung}, ${eur(b.betrag)}.`);
+}
 
 // ---------- Ausgleich an bestehender Buchung setzen oder aufheben
 function zeigeAusgleichFrage(nr, fehler) {
@@ -732,15 +834,17 @@ async function ausgleichSetzen(nr, grund, knopf) {
   const b = z.modell.buchungen.find((x) => x.nr === nr);
   if (!b) return;
   const wert = grund ? AUSGLEICH[grund] : '';
+  if (z.schreibt) return;
   if (knopf) { knopf.disabled = true; knopf.textContent = 'Wird gespeichert …'; }
   const text = grund ? `${nr} ist jetzt ein Ausgleich und wird nicht angerechnet.` : `${nr} wird wieder angerechnet.`;
+  z.schreibt = true;
   try {
     await od.gezahltVonSetzen(od.aktuellerOrt(), nr, wert);
+    z.schreibt = false;
     if (menu.open) menu.close();
-    z.status = { art: 'info', text }; zeichne();
-    await ausOneDrive({ immer: true });
-    z.status = { art: 'info', text }; zeichne();
+    await nachDemSchreiben({ typ: 'aendern', nr, b: { ...b, gezahltVon: wert } }, text);
   } catch (e) {
+    z.schreibt = false;
     const msg = e instanceof od.AnmeldungNoetig ? 'Die Anmeldung ist abgelaufen. Bitte im Menü neu anmelden.'
       : e instanceof od.KeinNetz ? 'Gerade keine Verbindung zu OneDrive. Es wurde nichts geändert.'
         : 'Das hat nicht geklappt: ' + e.message;
@@ -765,6 +869,9 @@ document.addEventListener('click', async (ev) => {
     if (t.dataset.zeitraum === 'eigen' && z.zeitraum !== 'eigen') { z.eigenVon = null; z.eigenBis = null; }
     z.zeitraum = t.dataset.zeitraum; zeichne(); return;
   }
+  if (t.dataset.bearbeiten) { zeigeBearbeiten(t.dataset.bearbeiten); return; }
+  if (t.dataset.loeschenFrage) { zeigeLoeschen(t.dataset.loeschenFrage); return; }
+  if (t.dataset.loeschen) { loeschen(t.dataset.loeschen, t); return; }
   if (t.dataset.ausgleichFrage) { zeigeAusgleichFrage(t.dataset.ausgleichFrage); return; }
   if (t.dataset.ausgleich != null && t.dataset.nr) { ausgleichSetzen(t.dataset.nr, t.dataset.ausgleich, t); return; }
   if (t.classList.contains('bu')) { t.setAttribute('aria-expanded', t.getAttribute('aria-expanded') === 'true' ? 'false' : 'true'); return; }

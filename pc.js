@@ -44,6 +44,12 @@ function zeigeAnmelden(fehler) {
   </main>`;
 }
 
+/** Nach dem Schreiben: warten, bis OneDrive die neue Version ausliefert, sonst sähe der Abgleich den alten Stand. */
+async function nachSchreibenLaden() {
+  const vorher = z.item?.eTag;
+  if (z.ort && vorher) await od.aufNeueVersionWarten(z.ort, vorher).catch(() => null);
+  await laden();
+}
 async function laden(versuch = 1) {
   if (!z.modell) root.innerHTML = '<main class="pc-start"><p class="hint">Lade die Datei aus OneDrive …</p></main>';
   try {
@@ -250,7 +256,7 @@ async function uebernehmen() {
     const r = await od.buchungenSchreiben(z.ort, p.neu.map((x) => ({ ...x.buchung, quelle: 'CSV' })), p.ergaenzen, p.korrekturen);
     z.schreibt = false;
     z.meldung = { art: 'info', html: `Übernommen: ${r.nummern.length} neue Buchungen${r.nummern.length ? ` (${h(r.nummern[0])}${r.nummern.length > 1 ? ' bis ' + h(r.nummern[r.nummern.length - 1]) : ''})` : ''}${r.ergaenzt ? `, ${r.ergaenzt}× Import-ID ergänzt` : ''}${p.korrekturen.length ? `, ${p.korrekturen.length}× Betrag korrigiert` : ''}. Die Bankzeilen stehen jetzt unter „Schon importiert“.` };
-    await laden();
+    await nachSchreibenLaden();
   } catch (e) {
     z.schreibt = false;
     z.meldung = { art: 'warn', html: `Das Übernehmen hat nicht geklappt: ${h(e.message)} Bitte „Neu laden“ und dann nachsehen, bevor ihr es noch einmal versucht – schon Übernommenes erkennt das Tool dann als „Schon importiert“.` };
@@ -434,7 +440,7 @@ document.addEventListener('click', async (ev) => {
     try {
       await od.kontostandEintragen(z.ort, z.abschlussMonat, konto, wert);
       z.meldung = { art: 'info', html: `Bankstand ${h(konto)} für ${monatsname(z.abschlussMonat, true)} gespeichert: ${eur(wert)}.` };
-      await laden();
+      await nachSchreibenLaden();
     } catch (e) { z.meldung = { art: 'warn', html: h(e.message) }; zeichne(); }
     return;
   }
@@ -444,7 +450,7 @@ document.addEventListener('click', async (ev) => {
   if (t.id === 'b-loeschen') { z.loeschenFrage = true; zeichne(); return; }
   if (t.id === 'b-loeschen-ja') {
     const nr = z.bearbeiten;
-    try { await od.buchungLoeschen(z.ort, nr); z.meldung = { art: 'info', html: `${h(nr)} gelöscht.` }; z.bearbeiten = null; z.loeschenFrage = false; await laden(); }
+    try { await od.buchungLoeschen(z.ort, nr); z.meldung = { art: 'info', html: `${h(nr)} gelöscht.` }; z.bearbeiten = null; z.loeschenFrage = false; await nachSchreibenLaden(); }
     catch (e) { z.meldung = { art: 'warn', html: 'Löschen hat nicht geklappt: ' + h(e.message) }; zeichne(); }
     return;
   }
@@ -491,7 +497,7 @@ document.addEventListener('submit', async (ev) => {
   try {
     await od.buchungAendern(z.ort, nr, { ...d, betrag });
     z.meldung = { art: 'info', html: `${h(nr)} gespeichert.` }; z.bearbeiten = null;
-    await laden();
+    await nachSchreibenLaden();
   } catch (e) { z.meldung = { art: 'warn', html: 'Speichern hat nicht geklappt: ' + h(e.message) }; zeichne(); }
 });
 document.addEventListener('dragover', (ev) => { if (imPc()) { ev.preventDefault(); document.getElementById('ablage')?.classList.add('drueber'); } });

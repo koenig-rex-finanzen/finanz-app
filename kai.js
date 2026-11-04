@@ -49,14 +49,23 @@ export async function laden({ immer = false } = {}) {
 
 /** Schreibt über eine Excel-Sitzung (Formeln und Auswahllisten bleiben), lädt danach neu. */
 async function schreiben(arbeit, meldung, { knopf, dialogFehler } = {}) {
+  if (S.schreibt) return false;
   if (knopf) { knopf.disabled = true; knopf.dataset.t = knopf.textContent; knopf.textContent = 'Wird gespeichert …'; }
+  S.schreibt = true;
   try {
+    const vorher = S.item?.eTag;
     const r = await C.od.mitSitzung(S.ort, arbeit);
+    S.schreibt = false;
     if (C.menu.open) C.menu.close();
-    S.meldung = { art: 'info', text: typeof meldung === 'function' ? meldung(r) : meldung };
+    const text = typeof meldung === 'function' ? meldung(r) : meldung;
+    // OneDrive liefert die Datei nach dem Schreiben oft noch kurz im alten Stand: erst neu laden, wenn die neue Version da ist.
+    S.meldung = { art: 'info', text: text + ' Anzeige wird aktualisiert …' }; C.zeichne();
+    const neu = await C.od.aufNeueVersionWarten(S.ort, vorher).catch(() => null);
+    S.meldung = { art: neu ? 'info' : 'warn', text: neu ? text : text + ' OneDrive zeigt die Änderung noch nicht an. Bitte gleich über das Menü neu laden.' };
     await laden({ immer: true });
     return true;
   } catch (e) {
+    S.schreibt = false;
     const t = e instanceof C.od.AnmeldungNoetig ? 'Die Anmeldung ist abgelaufen. Bitte neu anmelden. Es wurde nichts gespeichert.'
       : e instanceof C.od.KeinNetz ? 'Keine Verbindung zu OneDrive. Es wurde nichts gespeichert.'
         : /423|locked|gesperrt/i.test(e.message) ? 'Die Datei ist gerade in Excel geöffnet und gesperrt. Bitte dort schließen und noch einmal versuchen.'
