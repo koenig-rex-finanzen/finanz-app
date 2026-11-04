@@ -4,6 +4,7 @@
 import * as P from './kern/privat.js';
 import { eur, monatsname, monatPlus, monatsende, monatsansicht, toepfeStand } from './kern/rechnen.js';
 import { leseCsv, csvText, kontoErkennen, kurzname } from './kern/csv.js';
+import * as kai from './kai.js';
 
 // Bereiche, die schon gebaut sind. Für alle anderen zeigt die App „kommt als Nächstes“.
 const FERTIG = new Set(['Natalie']);
@@ -30,7 +31,7 @@ const hol = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch {
 const konto = () => C.ms.gemerktesKonto() || 'ohne';
 const d = () => M.akt?.daten;
 
-export function init(ctx) { C = ctx; M.tab = hol('ug.mtab') || 'm-uebersicht'; }
+export function init(ctx) { C = ctx; M.tab = hol('ug.mtab') || 'm-uebersicht'; kai.init(ctx); }
 
 /** Thema (Farben) passend zum Bereich setzen. */
 export function thema(an) {
@@ -44,6 +45,7 @@ export async function laden({ immer = false } = {}) {
   if (!verfuegbar() || M.laedt) return;
   M.person = hol('ug.person.' + konto());
   if (!M.person) { M.status = 'person'; C.zeichne(); return; }
+  if (M.person === 'Kai') { M.status = 'kai'; return kai.laden({ immer }); }
   if (!FERTIG.has(M.person)) { M.status = 'spaeter'; C.zeichne(); return; }
   // Zwischenspeicher (offline)
   const cache = hol('ug.privat.' + konto());
@@ -65,7 +67,7 @@ export async function laden({ immer = false } = {}) {
       : e instanceof C.od.KeinNetz ? 'Gerade keine Verbindung. Du siehst den zuletzt geladenen Stand.' : e.message;
   } finally { M.laedt = false; C.zeichne(); }
 }
-export function vergessen() { M.akt = null; M.status = 'aus'; M.geladenFuer = null; merk('ug.privat.' + konto(), null); }
+export function vergessen() { kai.vergessen(); M.akt = null; M.status = 'aus'; M.geladenFuer = null; merk('ug.privat.' + konto(), null); }
 
 /**
  * Ändert die private Datei: lädt den neuesten Stand, wendet `fn` an, speichert mit If-Match.
@@ -159,6 +161,7 @@ export function zeichne() {
   };
   if (M.status === 'aus' || (M.laedt && !d())) { wahl(`<div class="leer m-laedt">Dein Bereich wird geladen …</div>`, false); if (M.status === 'aus') laden(); return; }
   if (M.status === 'person') { wahl(personWahl(), false); return; }
+  if (M.status === 'kai') { kai.zeichne(); return; }
   if (M.status === 'spaeter') { wahl(spaeter(), false); return; }
   if (M.status === 'kein-ordner') { wahl(keinOrdner(), false); return; }
   if (M.status === 'einrichten') { wahl(einrichten(), false); return; }
@@ -586,7 +589,7 @@ function challengeNeuDialog(typ, fehler, vorher = {}) {
 function menuDialog() {
   dialog(`<h2 id="menu-titel">Mein Bereich</h2>
     <div class="zeile"><span class="hint">Person</span><span>${h(M.person || '–')}</span></div>
-    <div class="zeile"><span class="hint">Gespeichert in</span><span>${M.ordner ? (M.ordner.quelle === 'ersatz' ? 'deinem OneDrive › Unser-Geld-Privat' : `OneDrive › Apps › ${h(M.ordner.name)}`) : '–'}</span></div>
+    <div class="zeile"><span class="hint">Gespeichert in</span><span>${M.status === 'kai' ? 'OneDrive › Apps › Kai › Kai_Privat.xlsx' : M.ordner ? (M.ordner.quelle === 'ersatz' ? 'deinem OneDrive › Unser-Geld-Privat' : `OneDrive › Apps › ${h(M.ordner.name)}`) : '–'}</span></div>
     <div class="zeile"><span class="hint">Zuletzt geändert</span><span>${d()?.geaendert ? new Date(d().geaendert).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '–'}</span></div>
     <div class="knoepfe">
       ${d() ? `<button class="knopf leise" data-m="giro-start">Anfangsstand Giro</button>
@@ -606,6 +609,7 @@ function menuDialog() {
 export async function klick(t) {
   const a = t.dataset.m;
   if (t.id === 'menu-knopf') { menuDialog(); return true; }
+  if (M.status === 'kai' && t.dataset.k) return kai.klick(t);
   if (!a) return false;
   const arg = t.dataset.arg;
   const ctx = () => ({ modell: C.z.modell, p: d(), heute: C.heute() });
@@ -718,6 +722,7 @@ function gemeinsamVorlage({ von, nach, betrag, posten, topf, giltFuer, kommentar
 
 /** Formulare im privaten Bereich. Gibt true zurück, wenn behandelt. */
 export async function absenden(form) {
+  if (form.id.startsWith('k-')) return kai.absenden(form);
   const x = Object.fromEntries(new FormData(form));
   const knopf = form.querySelector('button[type=submit]');
   switch (form.id) {
@@ -867,4 +872,10 @@ function abgleichNeu() {
     M.csv = { csv, ...P.abgleichen(csv, C.z.modell, d()) };
     M.csvFehler = null;
   } catch (e) { M.csv = null; M.csvFehler = e.message; }
+}
+
+/** Eingaben/Dateien in Kais Bereich. */
+export function kaiAenderung(el) {
+  if (el.type === 'file') { const f = el.files?.[0]; el.value = ''; if (f) kai.dateiGewaehlt(el.id, f); return true; }
+  return kai.eingabe(el);
 }

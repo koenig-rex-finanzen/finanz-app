@@ -205,7 +205,7 @@ export async function buchungenSchreiben(ort, neue, ergaenzen = [], korrekturen 
 
 
 // ---------------------------------------------------------------- Einzelne Buchung ändern / löschen
-async function mitSitzung(ort, arbeit) {
+export async function mitSitzung(ort, arbeit) {
   const W = `/drives/${ort.driveId}/items/${ort.itemId}/workbook`;
   const json = (o) => ({ ...o, headers: { 'Content-Type': 'application/json', ...(o.headers || {}) } });
   const sitzung = await graph(W + '/createSession', json({ method: 'POST', body: JSON.stringify({ persistChanges: true }) }));
@@ -440,4 +440,17 @@ export function topfNeu(ort, { name, konto, bereich, sparrate, bemerkung, sticht
     if (String(k.values[0][0]).trim() !== name.trim()) throw new Error('Der Topf wurde nicht wie erwartet angelegt. Bitte in Excel prüfen.');
     return { zeile: z };
   });
+}
+
+// ---------------------------------------------------------------- Kais private Datei (Kai_Privat.xlsx im Ordner Apps/Kai)
+export const KAI_DATEI = 'Kai_Privat.xlsx';
+/** Sucht Kai_Privat.xlsx im privaten Ordner. @returns {{ort, item}|null} */
+export async function kaiDateiFinden(ordner) {
+  if (ordner) {
+    const it = await graph(`/drives/${ordner.driveId}/items/${ordner.itemId}:/${encodeURIComponent(KAI_DATEI)}?$select=${FELDER}`).catch(nurFehlend);
+    if (it?.id) return { ort: { driveId: it.parentReference?.driveId || ordner.driveId, itemId: it.id }, item: it };
+  }
+  const treffer = await graph(`/me/drive/root/search(q='Kai_Privat')?$select=${FELDER}`).catch(nurFehlend);
+  const it = treffer?.value?.find((k) => k.name === KAI_DATEI);
+  return it ? { ort: ortVon(it), item: it } : null;
 }

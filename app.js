@@ -6,7 +6,7 @@ import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 import * as meins from './meins.js';
 
-const VERSION = '0.9.0';
+const VERSION = '0.10.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -66,6 +66,13 @@ async function start() {
         if (me) ms.kontoMerken(me.mail || me.userPrincipalName || me.displayName);
       }
     } catch (e) { fehler = e.message; }
+  }
+  if (location.hash === '#kai') {
+    z.bereich = 'meins'; merken('bereich', 'meins');
+    const l = document.querySelector('link[rel=manifest]'); if (l) l.href = 'kai.webmanifest';
+    document.title = 'Mein Geld';
+    const k = 'ug.person.' + (ms.gemerktesKonto() || 'ohne');
+    try { if (!localStorage.getItem(k)) localStorage.setItem(k, '"Kai"'); } catch {}
   }
   if (location.hash === '#pc') {
     const pc = await import('./pc.js');
@@ -172,16 +179,19 @@ document.addEventListener('submit', async (ev) => {
 });
 
 document.addEventListener('submit', async (ev) => {
-  if (!ev.target.id?.startsWith('m-')) return;
+  if (!/^[mk]-/.test(ev.target.id || '')) return;
   ev.preventDefault();
   await meins.absenden(ev.target);
 });
 
 document.addEventListener('change', (ev) => {
+  if (/^k-/.test(ev.target.id || '') && ev.target.id !== 'k-suche') { meins.kaiAenderung(ev.target); return; }
   if (ev.target.id === 'm-csv') { const f = ev.target.files?.[0]; ev.target.value = ''; if (f) meins.csvGewaehlt(f); return; }
   if (ev.target.id === 'topf-von') { z.eigenVon = ev.target.value; if (z.eigenBis && z.eigenBis < z.eigenVon) z.eigenBis = z.eigenVon; zeichne(); }
   if (ev.target.id === 'topf-bis') { z.eigenBis = ev.target.value; if (z.eigenVon && z.eigenVon > z.eigenBis) z.eigenVon = z.eigenBis; zeichne(); }
 });
+
+document.addEventListener('input', (ev) => { if (ev.target.id === 'k-suche') meins.kaiAenderung(ev.target); });
 
 document.addEventListener('visibilitychange', () => {
   if (document.body.classList.contains('pc-modus')) return;
