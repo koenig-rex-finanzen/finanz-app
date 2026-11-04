@@ -99,7 +99,7 @@ export function zeichne() {
   if (S.status === 'aus' || (S.laedt && !S.k)) { wahl('<div class="leer m-laedt">Mein Geld wird geladen …</div>', false); if (S.status === 'aus') laden(); return; }
   if (S.status === 'keine-datei') {
     wahl(`<section class="m-start"><h2>Kai_Privat.xlsx nicht gefunden</h2><p>Die App sucht die Datei im Ordner <b>OneDrive › Apps › Kai</b> (nicht geteilt). Lade sie dort hoch, dann auf „Noch mal suchen“.</p>
-      <div class="knoepfe-liste"><button class="knopf" data-k="neu-laden">Noch mal suchen</button><button class="knopf leise" data-m="person-wechseln">Andere Person wählen</button></div></section>`, false);
+      <div class="knoepfe-liste"><button class="knopf" data-k="neu-laden">Noch mal suchen</button></div></section>`, false);
     return;
   }
   if (S.status === 'fehler' && !S.k) { wahl(`<div class="hinweis warn">${h(S.fehler)}</div><button class="knopf" data-k="neu-laden">Noch mal versuchen</button>`, false); return; }

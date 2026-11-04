@@ -5,6 +5,7 @@ import * as P from './kern/privat.js';
 import { eur, monatsname, monatPlus, monatsende, monatsansicht, toepfeStand } from './kern/rechnen.js';
 import { leseCsv, csvText, kontoErkennen, kurzname } from './kern/csv.js';
 import * as kai from './kai.js';
+import { CONFIG } from './config.js';
 
 // Bereiche, die schon gebaut sind. Für alle anderen zeigt die App „kommt als Nächstes“.
 const FERTIG = new Set(['Natalie']);
@@ -43,12 +44,17 @@ export const verfuegbar = () => C.ms.aktiv() && C.ms.angemeldet() && C.z.datei?.
 // ---------------------------------------------------------------- Laden
 export async function laden({ immer = false } = {}) {
   if (!verfuegbar() || M.laedt) return;
-  M.person = hol('ug.person.' + konto());
-  if (!M.person) { M.status = 'person'; C.zeichne(); return; }
+  M.laedt = true;
+  try { M.person = await personErmitteln(); }
+  catch (e) { M.person = null; M.status = 'fehler'; M.fehler = e instanceof C.od.AnmeldungNoetig ? 'Die Microsoft-Anmeldung ist abgelaufen. Bitte im Menü neu anmelden.' : e.message; }
+  finally { M.laedt = false; }
+  if (M.status === 'fehler' && !M.person) { C.zeichne(); return; }
+  if (!M.person) { M.status = 'unbekannt'; C.zeichne(); return; }
+  // Zwischenspeicher (offline); einen fremden Stand vom Gerät entfernen
+  const cache = hol('ug.privat.' + konto());
+  if (cache && cache.person !== M.person) { merk('ug.privat.' + konto(), null); M.akt = null; }
   if (M.person === 'Kai') { M.status = 'kai'; return kai.laden({ immer }); }
   if (!FERTIG.has(M.person)) { M.status = 'spaeter'; C.zeichne(); return; }
-  // Zwischenspeicher (offline)
-  const cache = hol('ug.privat.' + konto());
   if (!M.akt && cache?.person === M.person) { M.akt = cache.akt; M.status = 'bereit'; }
   if (!immer && M.geladenFuer === konto() && M.status === 'bereit') return;
   M.laedt = true;
@@ -66,6 +72,27 @@ export async function laden({ immer = false } = {}) {
     M.fehler = e instanceof C.od.AnmeldungNoetig ? 'Die Microsoft-Anmeldung ist abgelaufen. Bitte im Menü neu anmelden.'
       : e instanceof C.od.KeinNetz ? 'Gerade keine Verbindung. Du siehst den zuletzt geladenen Stand.' : e.message;
   } finally { M.laedt = false; C.zeichne(); }
+}
+/**
+ * Wer angemeldet ist, ergibt sich aus der Anmeldung, nicht aus einer Auswahl:
+ * Liegt die gemeinsame Datei im eigenen OneDrive, ist es der Besitzer (CONFIG.besitzer), sonst die andere Person.
+ * Ohne Netz gilt das zuletzt so ermittelte Ergebnis für dieses Konto.
+ */
+async function personErmitteln() {
+  const key = 'ug.person.' + konto();
+  const ort = C.od.aktuellerOrt();
+  if (!ort?.driveId) return null;
+  try {
+    const herkunft = await C.od.dateiHerkunft(ort);
+    let p = null;
+    if (herkunft === 'eigen') p = CONFIG.besitzer;
+    else { const andere = P.personen(C.z.modell).filter((x) => x !== CONFIG.besitzer); if (andere.length === 1) p = andere[0]; }
+    merk(key, p);
+    return p;
+  } catch (e) {
+    if (e instanceof C.od.KeinNetz) return hol(key);
+    throw e;
+  }
 }
 export function vergessen() { kai.vergessen(); M.akt = null; M.status = 'aus'; M.geladenFuer = null; merk('ug.privat.' + konto(), null); }
 
@@ -160,7 +187,7 @@ export function zeichne() {
     C.app.innerHTML = `${kopf}<main class="wrap meins">${M.fehler && M.status === 'bereit' ? `<div class="hinweis info">${h(M.fehler)}</div>` : ''}${inhalt}</main>${mitNav ? nav() : ''}`;
   };
   if (M.status === 'aus' || (M.laedt && !d())) { wahl(`<div class="leer m-laedt">Dein Bereich wird geladen …</div>`, false); if (M.status === 'aus') laden(); return; }
-  if (M.status === 'person') { wahl(personWahl(), false); return; }
+  if (M.status === 'unbekannt') { wahl(`<section class="m-start"><h2>Wer ist angemeldet?</h2><p>Die App konnte an der Microsoft-Anmeldung nicht erkennen, welcher private Bereich zu diesem Konto gehört. Der private Bereich bleibt deshalb zu.</p><div class="knoepfe-liste" style="margin-top:16px"><button class="knopf" data-m="neu-laden">Noch mal prüfen</button></div></section>`, false); return; }
   if (M.status === 'kai') { kai.zeichne(); return; }
   if (M.status === 'spaeter') { wahl(spaeter(), false); return; }
   if (M.status === 'kein-ordner') { wahl(keinOrdner(), false); return; }
@@ -175,24 +202,16 @@ export function zeichne() {
 const nav = () => `<nav><div class="wrap" role="tablist">${TABS.map(([id, name, pfad]) =>
   `<button role="tab" aria-selected="${M.tab === id}" data-m="tab" data-arg="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${pfad}</svg>${name}</button>`).join('')}</div></nav>`;
 
-function personWahl() {
-  const leute = P.personen(C.z.modell);
-  return `<section class="m-start"><h2>Wer bist du?</h2>
-    <p class="hint">Damit die App weiß, welchen privaten Bereich sie laden soll. Das merkt sich nur dieses Gerät für dein Microsoft-Konto (${h(konto())}).</p>
-    <div class="knoepfe-liste">${leute.map((p) => `<button class="knopf leise gross-knopf" data-m="person" data-arg="${h(p)}">${h(p)}</button>`).join('')}</div></section>`;
-}
 function spaeter() {
   return `<section class="m-start"><h2>Dein Bereich kommt als Nächstes</h2>
-    <p>Der private Bereich für ${h(M.person)} wird mit eigenen Wünschen gebaut (z. B. Vorschau mit Minus-Warnung). Bis dahin ist hier noch nichts.</p>
-    <p class="hint" style="margin-top:12px">Falsch gewählt? <button class="link" data-m="person-wechseln">Andere Person wählen</button></p></section>`;
+    <p>Der private Bereich für ${h(M.person)} wird mit eigenen Wünschen gebaut (z. B. Vorschau mit Minus-Warnung). Bis dahin ist hier noch nichts.</p></section>`;
 }
 function keinOrdner() {
   return `<section class="m-start"><h2>Dein Ordner ist noch nicht da</h2>
     <p>Die App sucht den Ordner <b>„${h(M.person)}“</b>, den Kai in seinem OneDrive unter <b>Apps</b> angelegt und mit dir geteilt hat.</p>
     <p class="hint" style="margin-top:8px">Hat Kai ihn schon geteilt? Dann öffne einmal den Link aus seiner Einladung (Mail von OneDrive), danach hier auf „Noch mal suchen“ tippen.</p>
     <div class="knoepfe-liste" style="margin-top:16px"><button class="knopf" data-m="neu-laden">Noch mal suchen</button>
-    <button class="knopf leise" data-m="ersatz-ordner">Stattdessen in meinem eigenen OneDrive anlegen</button></div>
-    <p class="hint" style="margin-top:12px">Falsche Person? <button class="link" data-m="person-wechseln">Andere Person wählen</button></p></section>`;
+    <button class="knopf leise" data-m="ersatz-ordner">Stattdessen in meinem eigenen OneDrive anlegen</button></div></section>`;
 }
 function einrichten(fehler) {
   const ort = M.ordner?.quelle === 'geteilt' ? `im Ordner „${h(M.ordner.name)}“, den Kai mit dir geteilt hat` : M.ordner?.quelle === 'eigen' ? `im Ordner Apps › ${h(M.ordner.name)}` : 'in deinem eigenen OneDrive (Ordner „Unser-Geld-Privat“)';
@@ -588,7 +607,7 @@ function challengeNeuDialog(typ, fehler, vorher = {}) {
 
 function menuDialog() {
   dialog(`<h2 id="menu-titel">Mein Bereich</h2>
-    <div class="zeile"><span class="hint">Person</span><span>${h(M.person || '–')}</span></div>
+    <div class="zeile"><span class="hint">Angemeldet als</span><span>${h(M.person || '–')}</span></div>
     <div class="zeile"><span class="hint">Gespeichert in</span><span>${M.status === 'kai' ? 'OneDrive › Apps › Kai › Kai_Privat.xlsx' : M.ordner ? (M.ordner.quelle === 'ersatz' ? 'deinem OneDrive › Unser-Geld-Privat' : `OneDrive › Apps › ${h(M.ordner.name)}`) : '–'}</span></div>
     <div class="zeile"><span class="hint">Zuletzt geändert</span><span>${d()?.geaendert ? new Date(d().geaendert).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '–'}</span></div>
     <div class="knoepfe">
@@ -599,7 +618,6 @@ function menuDialog() {
       <button class="knopf leise" data-m="meine-toepfe">Welche Töpfe sind meine?</button>` : ''}
       <button class="knopf leise" data-m="neu-laden">Neu laden</button>
       <button class="knopf leise" data-m="gemeinsames-menu">Datei & Anmeldung (gemeinsam)</button>
-      <button class="knopf leise" data-m="person-wechseln">Andere Person wählen</button>
       <button class="knopf leise" id="schliessen">Schließen</button></div>
     <p class="hint" style="margin-top:14px;text-align:center">Version ${h(C.version)}</p>`);
 }
@@ -615,8 +633,6 @@ export async function klick(t) {
   const ctx = () => ({ modell: C.z.modell, p: d(), heute: C.heute() });
   switch (a) {
     case 'tab': M.tab = arg; merk('ug.mtab', arg); M.meldung = null; C.zeichne(); window.scrollTo(0, 0); return true;
-    case 'person': merk('ug.person.' + konto(), arg); M.person = arg; M.status = 'aus'; M.akt = null; laden({ immer: true }); return true;
-    case 'person-wechseln': if (C.menu.open) C.menu.close(); merk('ug.person.' + konto(), null); vergessen(); M.status = 'person'; M.person = null; thema(false); C.zeichne(); return true;
     case 'neu-laden': if (C.menu.open) C.menu.close(); if (M.person) C.od.privatOrdnerVergessen(M.person); M.meldung = null; M.status = d() ? 'bereit' : 'aus'; await laden({ immer: true }); return true;
     case 'ersatz-ordner': try { M.ordner = await C.od.privatOrdnerFinden(M.person, { ersatz: true }); M.status = 'aus'; laden({ immer: true }); } catch (e) { M.fehler = fehlerText(e); M.status = 'fehler'; C.zeichne(); } return true;
     case 'gemeinsames-menu': C.menu.close(); C.zeigeMenu(); return true;

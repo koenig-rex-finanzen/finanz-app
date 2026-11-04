@@ -33,6 +33,15 @@ let gemerkt = null;
 const ortLesen = () => { try { return gemerkt || JSON.parse(localStorage.getItem('ug.ort')); } catch { return gemerkt; } };
 const ortMerken = (o) => { gemerkt = o; try { localStorage.setItem('ug.ort', JSON.stringify(o)); } catch {} };
 
+/**
+ * Liegt die gemeinsame Datei im eigenen OneDrive der angemeldeten Person?
+ * @returns {Promise<'eigen'|'geteilt'>} – entscheidet, wer angemeldet ist (Besitzer = eigen).
+ */
+export async function dateiHerkunft(ort) {
+  const d = await graph('/me/drive?$select=id');
+  return String(d?.id || '').toLowerCase() === String(ort?.driveId || '').toLowerCase() ? 'eigen' : 'geteilt';
+}
+
 /** Wo die Datei zuletzt gefunden wurde. */
 export const aktuellerOrt = () => ortLesen();
 

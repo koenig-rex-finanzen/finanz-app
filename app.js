@@ -6,7 +6,7 @@ import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 import * as meins from './meins.js';
 
-const VERSION = '0.10.1';
+const VERSION = '0.10.2';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -71,8 +71,6 @@ async function start() {
     z.bereich = 'meins'; merken('bereich', 'meins');
     const l = document.querySelector('link[rel=manifest]'); if (l) l.href = 'kai.webmanifest';
     document.title = 'Mein Geld';
-    const k = 'ug.person.' + (ms.gemerktesKonto() || 'ohne');
-    try { if (!localStorage.getItem(k)) localStorage.setItem(k, '"Kai"'); } catch {}
   }
   if (location.hash === '#pc') {
     const pc = await import('./pc.js');
