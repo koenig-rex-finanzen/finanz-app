@@ -364,7 +364,7 @@ function eintragenDialog(fehler, v0) {
   const zus = () => {
     const x = Object.fromEntries(new FormData(f)); const b = zahl(x.betrag); const u = x.art === K.UMBUCHUNG;
     f.querySelectorAll('.nur-umb').forEach((e) => { e.hidden = !u; }); f.querySelectorAll('.nicht-umb').forEach((e) => { e.hidden = u; });
-    const lab = f.querySelector('select[name=konto]')?.closest('label')?.querySelector('span'); if (lab) lab.textContent = u ? 'Von Konto' : 'Konto';
+    const lab = f.querySelector('select[name=konto]')?.closest('label')?.querySelector('span'); if (lab?.firstChild) { lab.firstChild.textContent = u ? 'Von Konto' : 'Konto'; const q = lab.querySelector('.hilfe'); if (q) q.dataset.hilfe = u ? 'Von Konto' : 'Konto'; }
     document.getElementById('k-zus').textContent = !(b > 0) ? '' : u ? `Umbuchung über ${eur(b)} von ${x.konto} nach ${x.nach || '?'}. Töpfe bleiben gleich.`
       : `${x.art} über ${eur(b)}${x.posten ? ', ' + x.posten : ''}${x.topf ? ', Topf ' + x.topf : ''}${eigeneKonten().length > 1 ? ', ' + x.konto : ''}, gilt für ${mn(x.giltFuer)}.`;
   };

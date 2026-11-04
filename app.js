@@ -7,7 +7,7 @@ import { verstehen } from './kern/verstehen.js';
 import * as meins from './meins.js';
 import * as hilfe from './hilfe.js';
 
-const VERSION = '0.12.0';
+const VERSION = '0.12.1';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
