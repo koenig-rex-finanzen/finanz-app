@@ -5,8 +5,9 @@ import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 import * as meins from './meins.js';
+import * as hilfe from './hilfe.js';
 
-const VERSION = '0.11.0';
+const VERSION = '0.12.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -58,6 +59,7 @@ const z = { modell: null, datei: null, monat: null, bereich: holen('bereich') ||
 
 // ---------- Start
 async function start() {
+  hilfe.starten();
   let fehler = null;
   if (ms.aktiv()) {
     try {

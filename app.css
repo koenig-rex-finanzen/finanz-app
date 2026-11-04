@@ -605,3 +605,12 @@ nav.sechs button svg{width:22px;height:22px}
 .k-zurueck{width:40px;height:40px;border-radius:999px;display:grid;place-items:center;background:var(--surface);color:var(--ink);flex:none}
 .bu-wrap.alt{opacity:.55}
 [hidden]{display:none !important}
+/* Fragezeichen mit Erklärung (ab 0.12.0) */
+.hilfe{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:9px;margin-left:4px;vertical-align:1px;font-size:12px;font-weight:700;line-height:1;cursor:pointer;
+  background:color-mix(in srgb,currentColor 14%,transparent);color:inherit;opacity:.75;user-select:none;-webkit-tap-highlight-color:transparent;position:relative}
+.hilfe::after{content:"";position:absolute;inset:-10px}
+.hilfe:hover,.hilfe:focus-visible{opacity:1;outline:none;background:color-mix(in srgb,currentColor 24%,transparent)}
+.hilfe-ueber{font-size:13px;color:var(--muted);margin:0 0 6px 2px;display:flex;align-items:center;gap:2px}
+.hilfe-blase{position:fixed;z-index:1000;padding:12px 14px;border-radius:14px;background:var(--surface);color:var(--ink);border:1px solid var(--line);
+  box-shadow:0 12px 32px rgba(0,0,0,.28);font-size:14px;line-height:1.45;font-weight:400;text-align:left}
+.hilfe-blase b{font-weight:700}

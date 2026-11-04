@@ -213,12 +213,12 @@ const eigeneKonten = () => (S.k.konten || [S.k.konto]).filter((kt) => kt === S.k
 function spartopfKarte(r, kurz) {
   const sp = r.spartopf;
   if (!sp) return '';
-  if (sp.fehlt) return `<section class="k-spar"><div class="k-spar-kopf"><span>${h(sp.name)}</span></div><p>Für den Spartopf fehlt noch der Stand zum Stichtag. Bis dahin rechnet die App so, als läge alles auf c24.</p>
+  if (sp.fehlt) return `<section class="k-spar"><div class="k-spar-kopf"><span data-hilfe-schluessel="spartopf">${h(sp.name)}</span></div><p>Für den Spartopf fehlt noch der Stand zum Stichtag. Bis dahin rechnet die App so, als läge alles auf c24.</p>
     <button class="knopf hell" data-k="konto" data-arg="${sp.zeile}">Stand eintragen</button></section>`;
   const o = sp.offen;
   const zeile = Math.abs(o) < 0.005 ? '<span class="k-ampel gruen">✓ passt genau</span>'
     : o > 0 ? `<span class="k-ampel rot">noch ${eur(o)} überweisen</span>` : `<span class="k-ampel">${eur(-o)} mehr drauf</span>`;
-  return `<section class="k-spar"><div class="k-spar-kopf"><span>${h(sp.name)}</span>${zeile}</div>
+  return `<section class="k-spar"><div class="k-spar-kopf"><span data-hilfe-schluessel="spartopf">${h(sp.name)}</span>${zeile}</div>
     <div class="k-gross">${eur(sp.stand)}</div>
     <div class="k-hero-zeilen"><span>verplant in Töpfen <b>${eur(sp.verplant)}</b></span><span>Rücklage auf c24 <b>${eur(r.ruecklage)}</b></span></div>
     ${!kurz && o > 0.005 ? `<button class="knopf hell" style="margin-top:12px" data-k="umbuchen" data-arg="${o}">${eur(o)} aufs Spartopf umbuchen</button>` : ''}</section>`;
