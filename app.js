@@ -6,8 +6,9 @@ import * as od from './onedrive.js';
 import { verstehen } from './kern/verstehen.js';
 import * as meins from './meins.js';
 import * as hilfe from './hilfe.js';
+import { spritAbschnitt } from './sprit.js';
 
-const VERSION = '0.13.0';
+const VERSION = '0.14.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -350,6 +351,8 @@ function uebersicht(v) {
     <p class="hint" style="margin-top:10px">Einkommen ${eur(v.anteil.einkommenKai)} und ${eur(v.anteil.einkommenNatalie)}. Gesamtbedarf ${eur(v.anteil.gesamtbedarf)}${v.anteil.schenkungen ? `, Mietgeschenk ${eur(v.anteil.schenkungen)} schon abgezogen` : ''}.</p>
   </div>` : ''}</section>` : '';
 
+  const sprit = spritAbschnitt(v);
+
   const ende = (v.laufend || v.zukunft) ? `<section><h2>Ende ${h(v.name)}</h2>
     <div class="ende"><div><div style="font-weight:600">Gemeinschaftskonto, voraussichtlich</div><div class="hint">wenn alles wie geplant kommt und abgeht</div></div><div class="betrag ${v.ablauf.ende < 0 ? 'neg' : ''}">${eur(v.ablauf.ende)}</div></div>
     <p class="hint" style="margin-top:10px">Jeden Posten mit Tag zeigt der Reiter Ablauf.</p></section>` : '';
@@ -357,7 +360,7 @@ function uebersicht(v) {
   const offen = v.offenePunkte.length ? `<section><h2>Noch zu klären</h2><ul class="offen-liste">${v.offenePunkte.map((p) =>
     `<li><b>${h(p.thema || 'Punkt ' + p.nr)}</b>${h(p.text)}</li>`).join('')}</ul></section>` : '';
 
-  return `<div class="hero"><p>${satz}</p>${chip}</div>${abw}${konten}${ueb}${ende}${offen}`;
+  return `<div class="hero"><p>${satz}</p>${chip}</div>${abw}${konten}${ueb}${sprit}${ende}${offen}`;
 }
 
 function ablauf(v) {

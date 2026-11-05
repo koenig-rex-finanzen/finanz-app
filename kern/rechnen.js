@@ -264,7 +264,66 @@ export function monatsansicht(modell, monat, heute) {
     monat, name: monatsname(monat), laufend, vergangen, zukunft, heute, konten, toepfe, toepfeSumme, sparkonten, nichtInToepfen,
     ueberweisungen, ausgleich, ausgleichSumme: summe(ausgleich, (b) => b.betrag), anteil, ablauf, buchungen, abweichungen,
     offenePunkte: modell.offenePunkte.filter((p) => !p.erledigt),
+    sprit: zukunft ? null : spritBudget(modell, monat, heute),
   };
+}
+
+// ---------------------------------------------------------------- Sprit-Budget
+// Plan: Posten „Sprit“ im Blatt „Kosten“ (Monatswert). Ist: Ausgaben an Extern, die nach Tanken aussehen
+// (Wofür oder Buchungstext), gezählt im Monat „Gilt für“. Erstattungen (Einnahme mit Sprit-Text) werden abgezogen.
+// Ausgleich-Buchungen zählen nicht. Tendenz erst, wenn mindestens 2 volle Monate Daten da sind.
+export const SPRIT_MUSTER = /\b(sprit|tank(?:en|stelle\w*|t)?|getankt|benzin|diesel|super ?e10|lpg|autogas|aral|shell|esso|agip|avia|totalenergies|star tankstelle|jet tank\w*|orlen|raiffeisen tank\w*)\b/i;
+const MIN_MONATE_TENDENZ = 2;
+const istSprit = (b) => SPRIT_MUSTER.test(`${b.posten || ''} ${b.beschreibung || ''}`);
+const monatVon = (b) => b.giltFuer || (b.datum || '').slice(0, 7);
+
+/** Was ist im Monat schon für Sprit weg (Buchungen dazu). */
+export function spritIst(modell, monat) {
+  const extern = (n) => ['extern', 'offen'].includes(rolle(modell, n));
+  const liste = modell.buchungen.filter((b) => monatVon(b) === monat && !istAusgleich(b) && istSprit(b)
+    && ((b.art !== 'Einnahme' && extern(b.nach) && !extern(b.von)) || (b.art === 'Einnahme' && extern(b.von))))
+    .map((b) => ({ nr: b.nr, datum: b.datum, posten: b.posten || b.beschreibung || '', betrag: b.art === 'Einnahme' || extern(b.von) ? -b.betrag : b.betrag, konto: extern(b.von) ? b.nach : b.von }))
+    .sort((a, b) => (a.datum || '').localeCompare(b.datum || ''));
+  return { summe: summe(liste, (x) => x.betrag), buchungen: liste };
+}
+
+/** Erster Monat mit vollständigen Daten: Monat nach dem frühesten Stichtag der gemeinsamen Konten. */
+function ersterDatenmonat(modell) {
+  const tage = modell.konten.filter((k) => k.rolle === 'gemeinsam' && k.stichtag).map((k) => k.stichtag).sort();
+  if (!tage.length) return null;
+  const d = new Date(Date.UTC(+tage[0].slice(0, 4), +tage[0].slice(5, 7) - 1, +tage[0].slice(8, 10) + 1));
+  const iso = d.toISOString().slice(0, 10);
+  return iso.slice(8, 10) === '01' ? iso.slice(0, 7) : monatPlus(iso.slice(0, 7), 1);
+}
+
+/**
+ * Sprit im Monat: Budget, schon weg, Rest, Tendenz.
+ * @returns {null | {budget, ist, rest, buchungen, laufend, vergangen, schnitt, schnittMonate, tendenz, tendenzAb, ueber, warnung}}
+ */
+export function spritBudget(modell, monat, heute) {
+  const plan = modell.kosten.filter((k) => /^sprit\b/i.test(norm(k.posten)) && aktivIn(k, monat));
+  if (!plan.length) return null;
+  const budget = summe(plan, (k) => k.monatswert);
+  const { summe: ist, buchungen } = spritIst(modell, monat);
+  const laufend = heute.slice(0, 7) === monat;
+  const vergangen = monatsende(monat) < heute;
+  const erster = ersterDatenmonat(modell);
+  // Volle Vormonate mit Daten (höchstens 3)
+  const vormonate = [];
+  for (let m = monatPlus(monat, -1); vormonate.length < 3 && erster && m >= erster; m = monatPlus(m, -1)) vormonate.push(m);
+  const werte = vormonate.map((m) => spritIst(modell, m).summe);
+  const schnitt = werte.length ? r2(werte.reduce((s, x) => s + x, 0) / werte.length) : null;
+  let tendenz = null;
+  if (laufend && werte.length >= MIN_MONATE_TENDENZ) {
+    const tage = tagVon(monatsende(monat));
+    const rest = Math.max(0, tage - tagVon(heute)) / tage;
+    tendenz = r2(ist + schnitt * rest);
+  }
+  const tendenzAb = erster ? monatPlus(erster, MIN_MONATE_TENDENZ) : null;
+  const ueber = r2(Math.max(ist, tendenz ?? 0) - budget);
+  const warnung = ist > budget + 0.005 ? 'drueber' : tendenz != null && tendenz > budget + 0.005 ? 'tendenz' : null;
+  return { budget, ist, rest: r2(budget - ist), buchungen, laufend, vergangen, schnitt: werte.length >= MIN_MONATE_TENDENZ ? schnitt : null,
+    schnittMonate: werte.length, tendenz, tendenzAb, ueber, warnung };
 }
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];

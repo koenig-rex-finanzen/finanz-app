@@ -19,6 +19,7 @@ const GEMEINSAM = {
   'Wer überweist was': 'Die gemeinsamen Kosten werden nach dem Anteil am Einkommen getragen. Hier steht, wer wie viel wohin überweisen soll und was schon angekommen ist.',
   'Töpfe auf dem Tagesgeld': 'Das Geld liegt zusammen auf einem Tagesgeld. Die Töpfe teilen es gedanklich auf, z. B. für Auto oder Geschenke. Jeder Topf hat eine eigene Sparrate.',
   'Noch zu klären': 'Punkte aus dem Blatt „Offene Punkte“, die noch nicht erledigt sind.',
+  'Sprit im…': 'Budget = Posten „Sprit“ im Blatt Kosten. Dazu zählt jede Ausgabe, deren „Wofür“ oder Bank-Text nach Tanken aussieht (z. B. Sprit, Tanken, Aral, Shell, Esso), im Monat „Gilt für“. Ab zwei vollen Monaten rechnet die App hoch, wo ihr am Monatsende landet: was schon weg ist + euer Durchschnitt für die restlichen Tage.',
 };
 
 const NATALIE = {

@@ -3,7 +3,7 @@
 // Wichtig: Hier stehen keine persönlichen Daten (keine IBANs, keine Namen). Konten werden über
 // die Kontonummer-Endungen aus der Excel-Datei erkannt, persönliche Regeln kommen aus einer Regeldatei.
 
-import { kontostand } from './rechnen.js';
+import { kontostand, SPRIT_MUSTER } from './rechnen.js';
 
 const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const tag = (iso) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 864e5;
@@ -41,11 +41,14 @@ export function leseCsv(text, dateiname = '') {
   const kopf = zeilen.slice(0, 7).map(zeileZerlegen);
   const finde = (name) => kopf.find((z) => (z[0] || '').trim().toLowerCase().startsWith(name));
   const inhaber = (finde('kontoinhaber') || [])[1] || '';
-  const kontoText = (kopf[2] || []).filter(Boolean).join(' ').trim();
+  // Kontozeile: normalerweise Zeile 3; sonst die erste Kopfzeile mit „Nr. 123456…“
+  const zeileText = (z) => (z || []).filter(Boolean).join(' ').trim();
+  const kontoText = /Nr\.?\s*\d{6,}/.test(zeileText(kopf[2])) ? zeileText(kopf[2]) : zeileText(kopf.find((z) => /Nr\.?\s*\d{6,}/.test(zeileText(z)))) || zeileText(kopf[2]);
   const kontoNr = (kontoText.match(/Nr\.?\s*(\d{6,})/) || dateiname.match(/KtoNr_(\d+)/) || [])[1] || '';
   const saldo = deZahl((finde('saldo') || [])[1]);
   const zr = ((finde('zeitraum') || [])[1] || '').match(/(\d{2}\.\d{2}\.\d{4})\s*-\s*(\d{2}\.\d{2}\.\d{4})/);
-  const kopfIdx = zeilen.findIndex((z) => /^Nr\.;Buchungsdatum;/i.test(z));
+  // Spaltenkopf: mit oder ohne Anführungszeichen, auch mit Leerzeichen/BOM davor
+  const kopfIdx = zeilen.findIndex((z) => /^\s*"?Nr\.?"?\s*;\s*"?Buchungsdatum"?\s*;/i.test(z.replace(/^\uFEFF/, '')));
   if (kopfIdx < 0) throw new Error(`„${dateiname || 'Datei'}“ ist kein VW-Bank-Export (Spaltenkopf fehlt).`);
   const spalten = zeileZerlegen(zeilen[kopfIdx]).map((s) => s.trim());
   const i = (n) => spalten.indexOf(n);
@@ -74,7 +77,7 @@ export function leseCsv(text, dateiname = '') {
 export function kontoErkennen(csv, modell) {
   const e = endung(csv.kontoNr);
   let k = modell.konten.find((x) => endung(x.ibanEnde) && endung(x.ibanEnde) === e);
-  if (!k && /visa|kreditkarte/i.test(csv.kontoText)) k = modell.konten.find((x) => /kredit|visa/i.test((x.art || '') + x.name));
+  if (!k && /visa|kreditkarte/i.test(`${csv.kontoText} ${csv.dateiname || ''}`)) k = modell.konten.find((x) => /kredit|visa/i.test((x.art || '') + x.name));
   return k || null;
 }
 
@@ -135,7 +138,7 @@ const LAEDEN = [
 // Allgemeine Stichworte (keine persönlichen Daten)
 const STICH = [
   { re: /\b(lidl|netto|aldi|edeka|kaufland|rewe|penny|norma|dm drogerie|rossmann|tedi|apotheke|b(?:ae|ä)ckerei|tgtg|toogoodtogo|cadera)\b/i, bereich: 'Wohnen & Haushalt', posten: null },
-  { re: /\b(aral|tankstelle|shell|esso|star tankstelle|jet tank)\b/i, bereich: 'Autos', posten: 'Sprit' },
+  { re: SPRIT_MUSTER, bereich: 'Autos', posten: 'Sprit' },
   { re: /\bparken\b/i, bereich: 'Autos', posten: 'Parken' },
   { re: /\b(autohaus|werkstatt|tüv|tuv)\b/i, bereich: 'Autos', posten: null },
   { re: /\bdrk\b/i, bereich: 'Kinder', posten: null },

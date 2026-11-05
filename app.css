@@ -614,3 +614,13 @@ nav.sechs button svg{width:22px;height:22px}
 .hilfe-blase{position:fixed;z-index:1000;padding:12px 14px;border-radius:14px;background:var(--surface);color:var(--ink);border:1px solid var(--line);
   box-shadow:0 12px 32px rgba(0,0,0,.28);font-size:14px;line-height:1.45;font-weight:400;text-align:left}
 .hilfe-blase b{font-weight:700}
+
+/* Sprit-Budget (Übersicht Gemeinsam) */
+.ber.sprit .hint{margin-top:6px}
+.sprit-warn{margin-top:8px;padding:8px 10px;border-radius:10px;background:var(--warn-soft);color:var(--warn);font-size:14px}
+.sprit-liste{margin-top:8px;font-size:14px}
+.sprit-liste summary{cursor:pointer;color:var(--muted)}
+.sprit-zeile{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--sunk)}
+.sprit-zeile small{color:var(--muted)}
+.sprit-zeile b{white-space:nowrap}
+.ber.sprit.erreicht .ber-kopf small{color:var(--warn);font-weight:600}
