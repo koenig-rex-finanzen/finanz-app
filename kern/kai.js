@@ -19,6 +19,9 @@ export const UMBUCHUNG = 'Umbuchung'; // von Konto (E) nach Konto (F), z. B. c24
 export const POSTEN_EXTRA = ['Überweisung Gemeinschaftskonto', 'Trade Republic (extra)', 'Sparraten-Erstattung (alt)', 'Sonstiges'];
 export const GK_POSTEN = 'Überweisung Gemeinschaftskonto';
 export const RUECKLAGE = 'Rücklage Lücke';
+/** „Wofür“ (Buchungen!Q): wofür das Geld ausgegeben wurde – unabhängig von Töpfen und Posten, nur zum Auswerten. */
+export const WOFUER = ['Freizeit', 'Essen & Trinken', 'Lieferdienst', 'Shopping', 'Amazon', 'Haushalt', 'Handwerksbedarf', 'Auto', 'Kinder', 'Abos', 'Geschenke', 'Gesundheit', 'Bargeld', 'Sonstiges'];
+export const WOFUER_SPALTE = 'Q';
 // Zeilenbereiche der Datei (so angelegt, Formeln dort vorbelegt)
 export const BEREICHE = { buchungen: [5, 1004], kosten: [5, 24], einnahmen: [5, 12], toepfe: [5, 14], gemeinsam: [5, 18], depot: [17, 56], tr: [5, 2004], offen: [5, 200] };
 
@@ -42,7 +45,7 @@ export async function leseKai(daten) {
   const buchungen = zeilen('Buchungen', BEREICHE.buchungen, (c) => ({
     nr: txt(c('A')), datum: excelDatum(c('B')), giltFuer: mon(c('C')), art: txt(c('D')), konto: txt(c('E')), gegen: txt(c('F')),
     betrag: zahl(c('G')) || 0, kategorie: txt(c('H')), posten: txt(c('I')), topf: txt(c('J')), beschreibung: txt(c('K')),
-    kommentar: txt(c('L')), quelle: txt(c('M')), importId: txt(c('N')),
+    kommentar: txt(c('L')), quelle: txt(c('M')), importId: txt(c('N')), wofuer: txt(c(WOFUER_SPALTE)),
   }), 'A').filter((b) => b.nr);
   const kosten = zeilen('Kosten', BEREICHE.kosten, (c) => ({
     id: txt(c('A')), posten: txt(c('B')), bereich: txt(c('C')), betrag: zahl(c('D')) || 0, rhythmus: txt(c('E')) || 'monatlich',
@@ -164,6 +167,104 @@ export function rechneKai(k, heute, { horizont } = {}) {
   };
 }
 
+// ---------------------------------------------------------------- Kontostände prüfen
+
+const tagNr = (iso) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 864e5;
+/** Eigene Konten mit echtem Geld (c24 + Pockets mit Rolle „Sparen“). */
+export const eigeneKonten = (k) => (k.konten || [k.konto]).filter((kt) => kt === k.konto || kt.name === k.konto.name || kt.rolle === 'Sparen');
+
+/** Sieht aus wie eine Überweisung zwischen den eigenen Konten, ist aber nicht als Umbuchung eingetragen. */
+export function falscheUmbuchungen(k) {
+  const namen = eigeneKonten(k).map((kt) => kt.name);
+  const kurz = namen.map((n) => n.replace(/^c24\s+/i, '').toLowerCase()).filter((n) => n.length > 3);
+  return k.buchungen.filter((b) => (b.art === 'Ausgabe' || b.art === 'Einnahme') && !b.topf && (
+    namen.includes(b.gegen) || /umbuchung/i.test(b.kategorie || '') || kurz.some((n) => (b.gegen || '').toLowerCase() === n)));
+}
+
+/**
+ * Vergleicht den Stand laut Bank mit dem berechneten Stand.
+ * @param {object} k aus leseKai()
+ * @param {Object<string, number>} bank Kontoname → Stand laut Bank-App
+ * @returns {{konten: Array, ok: boolean, falsch: Array}}
+ */
+export function kontenPruefen(k, bank) {
+  const konten = eigeneKonten(k).filter((kt) => bank[kt.name] != null && isFinite(bank[kt.name])).map((kt) => {
+    const stand = standVon(k, kt);
+    const diff = stand == null ? null : r2(bank[kt.name] - stand);
+    const nach = k.buchungen.filter((b) => b.datum && (!kt.stichtag || b.datum > kt.stichtag) && wirkungAuf(b, kt.name) !== 0);
+    let verdacht = [];
+    if (diff != null && Math.abs(diff) >= 0.005) {
+      // 1. Buchung, deren Betrag genau der Differenz entspricht (doppelt drin, Vorzeichen falsch oder fehlt auf dem Auszug)
+      const passt = (b) => Math.abs(Math.abs(wirkungAuf(b, kt.name)) - Math.abs(diff)) < 0.005 || Math.abs(Math.abs(wirkungAuf(b, kt.name)) * 2 - Math.abs(diff)) < 0.005;
+      const doppelt = new Set();
+      for (const b of nach) for (const c of nach) if (b.nr < c.nr && Math.abs(wirkungAuf(b, kt.name) - wirkungAuf(c, kt.name)) < 0.005 && Math.abs(tagNr(b.datum) - tagNr(c.datum)) <= 3) { doppelt.add(b); doppelt.add(c); }
+      verdacht = nach.filter((b) => passt(b) || doppelt.has(b)).map((b) => ({ ...b, wirkung: wirkungAuf(b, kt.name),
+        grund: [passt(b) ? 'Betrag passt zur Differenz' : null, doppelt.has(b) ? 'gleicher Betrag innerhalb von 3 Tagen' : null].filter(Boolean).join(' · ') }))
+        .sort((a, b) => (b.grund.includes('Differenz') - a.grund.includes('Differenz')) || b.datum.localeCompare(a.datum));
+      verdacht.push({ hinweis: diff < 0
+        ? `Bei der Bank sind ${eur2(-diff)} weniger. Fehlt in der App eine Ausgabe, oder steht eine Einnahme doppelt drin?`
+        : `Bei der Bank sind ${eur2(diff)} mehr. Steht in der App eine Ausgabe doppelt drin, oder fehlt eine Einnahme?` });
+    }
+    return { name: kt.name, zeile: kt.zeile, bank: r2(bank[kt.name]), stand, diff, ok: diff != null && Math.abs(diff) < 0.005, verdacht, stichtag: kt.stichtag };
+  });
+  return { konten, ok: konten.length > 0 && konten.every((x) => x.ok), falsch: falscheUmbuchungen(k) };
+}
+const eur2 = (n) => n.toFixed(2).replace('.', ',') + ' €';
+
+// ---------------------------------------------------------------- Wofür
+
+const WOFUER_REGELN = [
+  ['Bargeld', /bargeld|geldautomat|viacash/i],
+  ['Amazon', /amazon|amzn/i],
+  ['Lieferdienst', /lieferando|wolt|uber\s?eats|domino|flink|getir|pizza/i],
+  ['Handwerksbedarf', /obi\b|hornbach|bauhaus|toom|hagebau|globus baumarkt|baumarkt|werkzeug|würth|wuerth/i],
+  ['Abos', /anthropic|openai|chatgpt|netflix|spotify|disney|dazn|youtube|apple\.com|google\s?(one|play)|lovable|runpod|digitale produkte/i],
+  ['Auto', /aral|shell|esso|jet\b|total|tankstelle|tanken|kfz|werkstatt|atu\b|parkhaus|parken|mobilität/i],
+  ['Gesundheit', /apotheke|arzt|zahn|gesundheit|optik|physio/i],
+  ['Essen & Trinken', /netto|rewe|edeka|aldi|lidl|kaufland|penny|wurst|bäcker|baecker|metzger|restaurant|café|cafe|imbiss|döner|lebensmittel/i],
+  ['Kinder', /kita|spielzeug|mytoys|kinder/i],
+  ['Geschenke', /geschenk/i],
+  ['Haushalt', /dm\b|rossmann|ikea|haushalt|drogerie/i],
+  ['Shopping', /shopping|bekleidung|zalando|h&m|new yorker|primark|kleidung/i],
+  ['Freizeit', /freizeit|kino|schwimmbad|zoo|museum|tickets?\b|eventim|steam|playstation|nintendo/i],
+];
+/** Vorschlag fürs „Wofür“ aus Gegenüber, Beschreibung und Bank-Kategorie. Nur für Ausgaben ohne festen Posten. */
+export function wofuerVorschlag(b) {
+  if (!b || b.art !== 'Ausgabe' || b.posten === GK_POSTEN || b.posten === 'Trade Republic (extra)') return null;
+  const text = [b.gegen, b.beschreibung, b.kategorie].filter(Boolean).join(' ');
+  for (const [w, re] of WOFUER_REGELN) if (re.test(text)) return w;
+  return null;
+}
+
+/**
+ * Ausgaben nach „Wofür“ für die Monate von…bis („Gilt für“). Nur echte Ausgaben der eigenen Konten, keine Umbuchungen.
+ * Ohne „Wofür“: nach Posten gruppiert (Gemeinschaftskonto, Trade Republic, Feste Posten), sonst „Nicht zugeordnet“.
+ * Buchungen, die eigentlich Umbuchungen sind (falscheUmbuchungen), zählen nicht.
+ */
+export const WOFUER_EXTRA = ['Gemeinschaftskonto', 'Trade Republic', 'Feste Posten', 'Nicht zugeordnet'];
+/** Gruppe einer Ausgabe in der Auswertung: „Wofür“, sonst nach Posten, sonst „Nicht zugeordnet“. */
+export function wofuerGruppe(b) {
+  if (b.wofuer) return b.wofuer;
+  if (b.posten === GK_POSTEN) return 'Gemeinschaftskonto';
+  if (b.posten === 'Trade Republic (extra)') return 'Trade Republic';
+  if (b.posten && b.posten !== 'Sonstiges') return 'Feste Posten';
+  return 'Nicht zugeordnet';
+}
+export function wofuerAuswertung(k, von, bis) {
+  const namen = new Set(eigeneKonten(k).map((kt) => kt.name));
+  const falsch = new Set(falscheUmbuchungen(k));
+  const liste = k.buchungen.filter((b) => b.art === 'Ausgabe' && namen.has(b.konto) && !falsch.has(b) && b.giltFuer && b.giltFuer >= von && b.giltFuer <= bis);
+  const gruppen = new Map();
+  for (const b of liste) {
+    const g = wofuerGruppe(b);
+    const x = gruppen.get(g) || { name: g, summe: 0, anzahl: 0 };
+    x.summe = r2(x.summe + b.betrag); x.anzahl++; gruppen.set(g, x);
+  }
+  const rang = (n) => WOFUER_EXTRA.indexOf(n);
+  const reihen = [...gruppen.values()].sort((a, b) => rang(a.name) - rang(b.name) || b.summe - a.summe);
+  return { von, bis, gesamt: summe(liste, (b) => b.betrag), reihen, ohne: liste.filter((b) => wofuerGruppe(b) === 'Nicht zugeordnet').length, nichtGezaehlt: [...falsch].filter((b) => b.giltFuer >= von && b.giltFuer <= bis) };
+}
+
 /** Plan/Ist eines Monats (wie Start, Abschnitt Plan/Ist). */
 export function planIst(k, m) {
   const ein = { plan: summe(k.einnahmen, (e) => plan(e, m)), ist: summe(k.buchungen.filter((b) => b.giltFuer === m && b.art === 'Einnahme'), (b) => b.betrag) };
@@ -245,7 +346,8 @@ export function vorschlag(z, kk, { gkEndung, regeln = [] } = {}) {
   let posten = null, topf = null, gegen = z.empfaenger || 'Extern', folgemonat = false, konto = kk.konto.name;
   const sp = kk.spartopf;
   if (sp && aufSpartopf(z, sp)) konto = sp.name; // Zeile gehört zum Pocket selbst (z. B. Zinsen)
-  else if (sp && sp.endung && (z.iban || '').replace(/\s/g, '').endsWith(sp.endung)) {
+  else if (sp && ((sp.endung && (z.iban || '').replace(/\s/g, '').endsWith(sp.endung))
+    || (/umbuchung/i.test(`${z.kategorie} ${z.unterkategorie}`) && z.empfaenger && z.empfaenger.trim().length > 3 && sp.name.toLowerCase().includes(z.empfaenger.trim().toLowerCase())))) {
     // Überweisung zwischen c24 und Spartopf
     return { datum: z.datum, giltFuer: z.datum.slice(0, 7), art: UMBUCHUNG, konto: z.betrag < 0 ? kk.konto.name : sp.name, gegen: z.betrag < 0 ? sp.name : kk.konto.name,
       betrag: r2(Math.abs(z.betrag)), kategorie: [z.kategorie, z.unterkategorie].filter(Boolean).join(' / ') || null, posten: null, topf: null,
@@ -266,12 +368,14 @@ export function vorschlag(z, kk, { gkEndung, regeln = [] } = {}) {
   }
   const datum = z.datum;
   const gf = folgemonat ? monatPlus(datum.slice(0, 7), 1) : giltFuer(datum, posten);
-  return {
+  const v = {
     datum, giltFuer: gf, art, konto, gegen, betrag: r2(Math.abs(z.betrag)),
     kategorie: [z.kategorie, z.unterkategorie].filter(Boolean).join(' / ') || null, posten, topf,
     beschreibung: [z.zweck || [z.typ, z.karteneinsatz].filter(Boolean).join(' '), z.empfaenger].filter(Boolean).join(' · ').slice(0, 250),
     kommentar: null, quelle: 'CSV', importId: z.id,
   };
+  v.wofuer = wofuerVorschlag(v);
+  return v;
 }
 
 /** Gehört die Exportzeile zum Pocket selbst (Kontonummer/Kontoname im Export)? */

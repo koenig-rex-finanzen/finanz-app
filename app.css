@@ -562,7 +562,7 @@ nav.fuenf .wrap{grid-template-columns:repeat(5,1fr)}
 .k-pp.summe{border-top:2px solid var(--ink);margin-top:8px;padding-top:8px;font-weight:700}
 .k-filter{display:grid;grid-template-columns:1fr;gap:8px}
 .k-filter input,.k-filter select{height:44px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:0 12px;font:inherit;font-size:16px;width:100%}
-@media (min-width:480px){.k-filter{grid-template-columns:2fr 1fr 1fr}}
+@media (min-width:480px){.k-filter{grid-template-columns:2fr 1fr 1fr 1fr}}
 .k-depot{display:grid;gap:8px}
 .k-pos{display:grid;grid-template-columns:1fr auto;gap:4px 10px;background:var(--surface);border-radius:16px;padding:12px 14px;width:100%;text-align:left}
 .k-pos .n{font-weight:700}
@@ -624,3 +624,39 @@ nav.sechs button svg{width:22px;height:22px}
 .sprit-zeile small{color:var(--muted)}
 .sprit-zeile b{white-space:nowrap}
 .ber.sprit.erreicht .ber-kopf small{color:var(--warn);font-weight:600}
+
+/* Kais Kontostände oben und „Wofür“ (ab 0.15.0) */
+.k-konten{margin:14px 0 16px;padding:18px;border-radius:24px;background:radial-gradient(120% 90% at 0 0,var(--himmel) 0,transparent 55%),linear-gradient(160deg,var(--neon-dunkel),#061647 80%);color:#fff;box-shadow:0 10px 28px color-mix(in srgb,var(--neon) 30%,transparent)}
+.k-konten .k-ampel:not(.gruen):not(.rot){background:rgba(255,255,255,.18);color:#fff}
+.k-konto-zeile{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.16)}
+.k-konto-zeile span{font-size:17px;font-weight:600;opacity:.92}
+.k-konto-zeile b{font-size:34px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.k-konto-zeile b.neg{color:#FFD0CC}
+.k-konto-zeile.summe{border-bottom:0}
+.k-konto-zeile.summe b{font-size:20px;font-weight:700}
+.k-konten-fuss{font-size:13px;opacity:.8;margin:4px 0 0}
+.k-konten .knopf.hell{width:100%}
+.chip.wofuer{background:var(--sunk);color:var(--muted);font-size:12px;margin-left:4px;vertical-align:2px}
+.k-wzeit{display:flex;gap:6px;margin:6px 0 10px;flex-wrap:wrap}
+.k-wzeit button{padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:14px;font-weight:600}
+.k-wzeit button.an{background:var(--akzent,var(--neon));border-color:var(--akzent,var(--neon));color:var(--auf-akzent,#fff)}
+.k-wofuer{background:var(--surface);border-radius:18px;overflow:hidden}
+.k-w-zeile{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:10px 14px;border-top:1px solid var(--line);width:100%;text-align:left;color:var(--ink)}
+.k-w-zeile:first-child{border-top:0}
+.k-w-zeile b{font-variant-numeric:tabular-nums}
+.k-w-zeile small{color:var(--muted);font-weight:500}
+.k-w-zeile.leise .k-w-name{color:var(--muted)}
+.k-w-zeile.summe{border-top:2px solid var(--ink);font-weight:700}
+.k-w-balken{grid-column:1/-1;height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}
+.k-w-balken i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--himmel),var(--neon))}
+.k-pr-konto{border-radius:16px;padding:12px 14px;margin:10px 0;background:var(--sunk)}
+.k-pr-konto.ab{background:var(--warn-soft)}
+.k-pr-kopf{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.k-pr-konto .k-ampel.rot{background:#C62828;color:#fff}
+.k-pr-liste{display:grid;gap:6px;margin:6px 0}
+.k-pr-b{display:flex;justify-content:space-between;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 10px;border-radius:12px;background:var(--surface);color:var(--ink);font-size:14px}
+.k-pr-b small{display:block;color:var(--muted);font-size:12.5px}
+.k-pr-b b{white-space:nowrap}
+.k-pr-liste details{background:var(--surface);border-radius:12px;padding:8px 10px}
+.k-pr-liste summary{cursor:pointer}
+.k-pr-liste details .k-pr-b{padding:5px 0;background:none}

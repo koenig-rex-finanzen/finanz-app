@@ -43,6 +43,9 @@ const NATALIE = {
 };
 
 const KAI = {
+  'Aktuelle Kontostände': 'So viel liegt laut deinen Buchungen gerade auf c24 und dem Spartopf. Mit „Mit Bank-App vergleichen“ prüfst du, ob es zur c24-App passt. Weicht es ab, zeigt die App Buchungen, die doppelt sein könnten oder fehlen.',
+  'Wofür': 'Wofür das Geld ausgegeben wurde, z. B. Freizeit oder Amazon. Das ist kein Topf und kein Posten, sondern nur zum Auswerten. Die App schlägt etwas vor, du kannst es ändern.',
+  'Wofür ausgegeben': 'Alle Ausgaben nach „Wofür“ sortiert. Ohne „Wofür“ sortiert die App nach Posten: Überweisungen aufs Gemeinschaftskonto, Trade Republic und „Feste Posten“ (z. B. Claude-Abo). Antippen zeigt die Buchungen.',
   'Art': '<b>Einnahme:</b> Geld kommt aufs Konto.<br><b>Ausgabe:</b> Geld geht vom Konto weg. Mit Topf: aus diesem Topf bezahlt.<br><b>In Topf:</b> extra Geld in einen Topf legen, zusätzlich zur Sparrate. Es bewegt sich kein Geld.<br><b>Aus Topf:</b> Geld aus einem Topf zurück ins „Frei“, ohne es auszugeben.<br><b>Umbuchung:</b> echtes Geld wandert zwischen c24 und Spartopf. Die Töpfe ändern sich nicht.',
   'Konto': 'Auf welchem deiner Konten die Buchung passiert.',
   'Von Konto': 'Von hier geht das Geld weg.',
