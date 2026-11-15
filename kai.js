@@ -76,6 +76,9 @@ async function schreiben(arbeit, meldung, { knopf, dialogFehler } = {}) {
   }
 }
 const ser = (iso) => K.serial(iso);
+const WL = () => K.wofuerListe(S.k);
+/** Budget als „Wofür“ gewählt → Posten = Budget (zählt dann in Kosten/Vorschau als Ist). */
+const budgetPosten = (b) => { if (b.wofuer && K.istBudget(S.k, b.wofuer) && (!b.posten || b.posten === 'Sonstiges')) b.posten = b.wofuer; return b; };
 const mSer = (m) => (m ? K.serial(m + '-01') : '');
 const buchungZeile = (b, nr) => [nr, ser(b.datum), mSer(b.giltFuer), b.art, b.konto, b.gegen || '', Number(b.betrag), b.kategorie || '', b.posten || '', b.topf || '', b.beschreibung || '', b.kommentar || '', b.quelle || 'manuell', b.importId || ''];
 /** Neue Buchungen in die ersten freien Zeilen (nur A–N, O/P sind Formeln). */
@@ -123,7 +126,7 @@ export function zeichne() {
   if (S.status === 'fehler' && !S.k) { wahl(`<div class="hinweis warn">${h(S.fehler)}</div><button class="knopf" data-k="neu-laden">Noch mal versuchen</button>`, false); return; }
   const r = K.rechneKai(S.k, C.heute());
   const meld = (S.fehler ? `<div class="hinweis info">${h(S.fehler)}</div>` : '') + (S.meldung ? `<div class="hinweis ${S.meldung.art}">${h(S.meldung.text)}</div>` : '');
-  const f = { 'k-uebersicht': uebersicht, 'k-vorschau': vorschau, 'k-buchungen': buchungen, 'k-toepfe': toepfeAnsicht, 'k-depot': depotAnsicht, 'k-mehr': mehr }[S.tab] || uebersicht;
+  const f = { 'k-ausgaben': ausgabenAnsicht, 'k-uebersicht': uebersicht, 'k-vorschau': vorschau, 'k-buchungen': buchungen, 'k-toepfe': toepfeAnsicht, 'k-depot': depotAnsicht, 'k-mehr': mehr }[S.tab] || uebersicht;
   wahl(meld + f(r));
   if (['k-uebersicht', 'k-buchungen'].includes(S.tab) || (S.tab === 'k-toepfe' && !S.topf)) C.app.insertAdjacentHTML('beforeend', '<button class="fab" data-k="eintragen" aria-label="Buchung eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>');
 }
@@ -150,6 +153,7 @@ function uebersicht(r) {
   const warn = luecke ? `<section class="k-warn" role="alert"><span class="k-warn-symbol" aria-hidden="true">!</span>
     <b>Im ${h(mn(r.ersterMinusMonat, false))} fehlen ${eur(r.fehlbetrag)}.</b>
     <p>${r.behalten > 0 ? `Behalte diesen Monat ${eur(r.behalten)} übrig.` : 'Auch ohne variable Ausgaben reicht es nicht – schau in die Vorschau.'}</p>
+    ${budgetDrueberText()}
     ${r.inRuecklage > 0 ? `<button class="knopf hell" data-k="ruecklage">${eur(r.inRuecklage)} in Rücklage legen</button>` : ''}</section>` : '';
   const abw = sollAbweichungen();
   const sollHinweis = abw.length ? `<div class="hinweis warn">Das Soll aufs Gemeinschaftskonto hat sich in der gemeinsamen Datei geändert (${abw.length > 3 ? `${abw.length} Monate, ab ${mn(abw[0].monat)}` : abw.map((a) => mn(a.monat, false)).join(', ')}). <button class="link" data-k="soll-uebernehmen">Übernehmen</button></div>` : '';
@@ -187,6 +191,67 @@ function kontostaende(r) {
     <p class="k-konten-fuss">Berechnet aus deinen Buchungen bis ${dl(r.letzteBuchung) || '–'}${p ? ` · zuletzt verglichen ${new Date(p.zeit).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })} ${new Date(p.zeit).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : ''}</p>
     <button class="knopf hell" data-k="pruefen">Mit Bank-App vergleichen</button></section>`;
 }
+/** „Über Budget: Dampfen +30,00 €“ für die Warnung (nur laufender Monat). */
+function budgetDrueberText() {
+  const akt = C.heute().slice(0, 7);
+  const d = K.budgets(S.k).map((x) => K.budgetStand(S.k, x, akt, C.heute())).filter((b) => b.drueber > 0);
+  return d.length ? `<p><span class="k-warn-budget">Über Budget:</span> ${d.map((b) => `${h(b.name)} +${eur(b.drueber)}`).join(', ')}. <button class="link hell" data-k="ausgaben">Ansehen</button></p>` : '';
+}
+/** Ring für ein Budget: äußerer Ring = verbraucht vom Plan, innerer roter Ring = was darüber hinausgeht, Strich = heute. */
+function budgetRing(b, gross = true) {
+  const g = gross ? 136 : 64, sw = gross ? 13 : 7, r1 = (g - sw) / 2, r2 = r1 - sw - (gross ? 4 : 2), c = g / 2;
+  const U1 = 2 * Math.PI * r1, U2 = 2 * Math.PI * r2;
+  const teil = b.plan > 0 ? Math.min(1, b.verbraucht / b.plan) : (b.verbraucht > 0 ? 1 : 0);
+  const ueber = b.plan > 0 ? Math.min(1, b.drueber / b.plan) : 0;
+  const winkel = b.anteil * 2 * Math.PI - Math.PI / 2;
+  const strich = b.anteil > 0 && b.anteil < 1 ? `<line x1="${c + (r1 - sw / 2 - 2) * Math.cos(winkel)}" y1="${c + (r1 - sw / 2 - 2) * Math.sin(winkel)}" x2="${c + (r1 + sw / 2 + 2) * Math.cos(winkel)}" y2="${c + (r1 + sw / 2 + 2) * Math.sin(winkel)}" class="k-ring-heute"><title>bis heute vorgesehen: ${eur(b.sollBisHeute)}</title></line>` : '';
+  return `<svg class="k-ring ${b.drueber > 0 ? 'drueber' : ''}" width="${g}" height="${g}" viewBox="0 0 ${g} ${g}" role="img" aria-label="${h(b.name)}: ${eur(b.verbraucht)} von ${eur(b.plan)} verbraucht">
+    <circle cx="${c}" cy="${c}" r="${r1}" class="k-ring-spur" stroke-width="${sw}" fill="none"/>
+    <circle cx="${c}" cy="${c}" r="${r1}" class="k-ring-wert" stroke-width="${sw}" fill="none" stroke-linecap="round" stroke-dasharray="${(teil * U1).toFixed(2)} ${U1.toFixed(2)}" transform="rotate(-90 ${c} ${c})"><title>verbraucht ${eur(b.verbraucht)} von ${eur(b.plan)}</title></circle>
+    ${ueber > 0 ? `<circle cx="${c}" cy="${c}" r="${r2}" class="k-ring-ueber" stroke-width="${sw}" fill="none" stroke-linecap="round" stroke-dasharray="${(ueber * U2).toFixed(2)} ${U2.toFixed(2)}" transform="rotate(-90 ${c} ${c})"><title>${eur(b.drueber)} über Budget</title></circle>` : ''}
+    ${strich}
+    ${gross ? `<text x="${c}" y="${c - 2}" text-anchor="middle" class="k-ring-zahl">${h(eur(b.verbraucht).replace(/,00 €$/, ' €'))}</text><text x="${c}" y="${c + 17}" text-anchor="middle" class="k-ring-von">von ${h(eur(b.plan).replace(/,00 €$/, ' €'))}</text>` : ''}</svg>`;
+}
+function budgetText(b, lauf) {
+  const restTage = lauf ? (() => { const h0 = C.heute(); const t = new Date(Date.UTC(+h0.slice(0, 4), +h0.slice(5, 7), 0)).getUTCDate(); return t - Number(h0.slice(8, 10)); })() : 0;
+  if (b.drueber > 0) return `<span class="k-b-status rot">⚠ ${eur(b.drueber)} über Budget</span>`;
+  if (lauf && b.verbraucht > b.sollBisHeute + 0.005) return `<span class="k-b-status gelb">↗ schneller als geplant</span><small>Bis heute wären ${eur(b.sollBisHeute)} dran. Noch ${eur(b.rest)} für ${restTage} Tag${restTage === 1 ? '' : 'e'}.</small>`;
+  return `<span class="k-b-status gruen">✓ im Plan</span><small>Noch ${eur(b.rest)} übrig${lauf ? ` für ${restTage} Tag${restTage === 1 ? '' : 'e'}` : ''}.</small>`;
+}
+/** Eigene Seite „Ausgaben“: Budgets als Ringe, Wofür mit Referenzwert, Verlauf 6 Monate. */
+function ausgabenAnsicht() {
+  const k = S.k; const heute = C.heute(); const akt = heute.slice(0, 7);
+  const m = S.aMonat || akt; const lauf = m === akt;
+  const bud = K.budgets(k).map((x) => K.budgetStand(k, x, m, heute)).filter((b) => b.plan > 0 || b.verbraucht > 0);
+  const a = K.wofuerAuswertung(k, m, m);
+  const ref = K.referenzWerte(k, m);
+  const max = Math.max(1, ...a.reihen.map((x) => Math.max(x.summe, ref.werte.get(x.name) || 0)));
+  const monate6 = Array.from({ length: 6 }, (_, i) => K.monatPlus(m, i - 5));
+  const v = K.wofuerVerlauf(k, monate6);
+  const reihen = v.gruppen.filter((g) => g.summe > 0).sort((x, y) => (K.WOFUER_EXTRA.indexOf(x.name) - K.WOFUER_EXTRA.indexOf(y.name)) || y.summe - x.summe);
+  const ersterMonat = [...k.buchungen.map((b) => b.giltFuer).filter(Boolean)].sort()[0] || akt;
+  const kopf = `<div class="k-topfkopf"><button class="k-zurueck" data-k="a-zurueck" aria-label="Zurück"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><h2>Ausgaben</h2></div>
+    <div class="k-amonat"><button class="knopf leise klein" data-k="a-monat" data-arg="${K.monatPlus(m, -1)}" ${K.monatPlus(m, -1) < ersterMonat ? 'disabled' : ''} aria-label="Vorheriger Monat">‹</button><b>${h(mn(m))}${lauf ? ' <small>läuft</small>' : ''}</b><button class="knopf leise klein" data-k="a-monat" data-arg="${K.monatPlus(m, 1)}" ${m >= akt ? 'disabled' : ''} aria-label="Nächster Monat">›</button></div>`;
+  const budHtml = bud.length ? `<section><h2>Budgets</h2>${bud.map((b) => `<div class="k-budget">${budgetRing(b)}<div class="k-b-info"><b class="k-b-name">${h(b.name)}</b>${budgetText(b, lauf)}
+      <button class="link" data-k="wofuer-filter" data-arg="${h(b.name)}">${b.anzahl} Buchung${b.anzahl === 1 ? '' : 'en'} ansehen</button></div></div>`).join('')}
+    <p class="hint">Blauer Ring: verbraucht vom Budget (voll = aufgebraucht). Roter innerer Ring: was darüber hinausgeht. Der Strich zeigt, wie viel bis heute dran wäre, wenn du gleichmäßig verbrauchst.</p></section>`
+    : `<section><h2>Budgets</h2><div class="leer">Noch kein Monatsbudget. Ein Topf, an den du jeden Monat gehst, lässt sich auf seiner Seite unter „Töpfe“ in ein Budget umwandeln.</div></section>`;
+  const wofHtml = `<section><h2>Wofür ausgegeben</h2>${a.reihen.length ? `<div class="k-wofuer">${a.reihen.map((x) => { const rw = ref.werte.get(x.name);
+    const bx = K.budgets(k).find((y) => y.posten === x.name);
+    return `<button class="k-w-zeile ${x.name === 'Nicht zugeordnet' ? 'leise' : ''}" data-k="wofuer-filter" data-arg="${h(x.name)}"><span class="k-w-name">${h(x.name)} <small>${x.anzahl}×${bx ? ` · Budget ${eur(K.plan(bx, m))}` : rw != null ? ` · Ø ${eur(rw)}` : ''}</small></span><b>${eur(x.summe)}</b>
+      <span class="k-w-balken mit-ref"><i style="width:${Math.round((x.summe / max) * 100)}%"></i>${rw != null ? `<em class="k-w-ref" style="left:${Math.min(100, Math.round((rw / max) * 100))}%" title="Ø ${eur(rw)}"></em>` : ''}</span></button>`; }).join('')}
+      <div class="k-w-zeile summe"><span class="k-w-name">Ausgaben gesamt</span><b>${eur(a.gesamt)}</b></div></div>
+      <p class="hint" style="margin-top:6px">${ref.werte.size ? `Strich und „Ø“ = Durchschnitt aus ${ref.monate.map((x) => mn(x, false)).join(', ')}. <b>Nur ein Referenzwert, kein Plan</b> – damit du siehst, ob ein Monat aus der Reihe fällt.` : 'Sobald es zwei Monate mit „Wofür“ gibt, zeigt die App hier einen Durchschnitt als Referenz.'}</p>`
+    : '<div class="leer">In diesem Monat gibt es noch keine Ausgaben.</div>'}
+    ${a.ohne ? `<p class="hint">${a.ohne} Ausgabe${a.ohne > 1 ? 'n' : ''} ohne „Wofür“. <button class="link" data-k="wofuer-alle">Jetzt zuordnen</button></p>` : ''}</section>`;
+  const vmax = (g) => Math.max(1, ...g.werte);
+  const verlauf = reihen.length ? `<section><h2>Verlauf</h2><div class="k-verlauf">
+      <div class="k-vl kopf"><span></span><span class="k-vl-bars">${monate6.map((x) => `<i>${h(mn(x, false).slice(0, 3))}</i>`).join('')}</span><span>Ø</span></div>
+      ${reihen.map((g) => { const avg = g.werte.filter((w) => w > 0).length ? g.summe / Math.max(1, g.werte.filter((w) => w > 0).length) : 0;
+        return `<div class="k-vl"><span class="k-vl-name">${h(g.name)}</span><span class="k-vl-bars">${g.werte.map((w, i) => `<i class="${monate6[i] === m ? 'akt' : ''}" style="--h:${Math.round((w / vmax(g)) * 100)}%" title="${h(mn(monate6[i], false))}: ${eur(w)}"></i>`).join('')}</span><span class="k-vl-avg">${eur(Math.round(avg * 100) / 100).replace(/,\d\d €$/, ' €')}</span></div>`; }).join('')}
+    </div><p class="hint" style="margin-top:6px">Je Zeile eigener Maßstab, der hervorgehobene Balken ist ${h(mn(m, false))}. Ø = Durchschnitt der Monate mit Ausgaben in dieser Gruppe.</p></section>` : '';
+  return kopf + budHtml + wofHtml + verlauf;
+}
 /** Auswertung „Wofür“ für den aktuellen Monat, 3 oder 12 Monate. */
 function wofuerHtml() {
   const akt = C.heute().slice(0, 7);
@@ -194,13 +259,16 @@ function wofuerHtml() {
   const a = K.wofuerAuswertung(S.k, von, akt);
   const max = Math.max(1, ...a.reihen.map((x) => x.summe));
   const wahl = [['monat', mn(akt, false)], ['3', '3 Monate'], ['12', '12 Monate']];
+  const budK = K.budgets(S.k).map((x) => K.budgetStand(S.k, x, akt, C.heute())).filter((b) => b.plan > 0);
   return `<section><h2>Wofür ausgegeben</h2>
+    ${budK.map((b) => `<button class="k-budget klein" data-k="ausgaben">${budgetRing(b, false)}<div class="k-b-info"><b class="k-b-name">${h(b.name)} <span>${eur(b.verbraucht)} von ${eur(b.plan)}</span></b>${budgetText(b, true)}</div></button>`).join('')}
     <div class="k-wzeit" role="group">${wahl.map(([w, t]) => `<button class="${S.wZeit === w ? 'an' : ''}" data-k="wzeit" data-arg="${w}">${h(t)}</button>`).join('')}</div>
     ${a.reihen.length ? `<div class="k-wofuer">${a.reihen.map((x) => `<button class="k-w-zeile ${x.name === 'Nicht zugeordnet' ? 'leise' : ''}" data-k="wofuer-filter" data-arg="${h(x.name)}"><span class="k-w-name">${h(x.name)} <small>${x.anzahl}×</small></span><b>${eur(x.summe)}</b><span class="k-w-balken"><i style="width:${Math.round((x.summe / max) * 100)}%"></i></span></button>`).join('')}
       <div class="k-w-zeile summe"><span class="k-w-name">Ausgaben gesamt</span><b>${eur(a.gesamt)}</b></div></div>`
     : '<div class="leer">In diesem Zeitraum gibt es noch keine Ausgaben.</div>'}
     ${a.ohne ? `<p class="hint" style="margin-top:8px">${a.ohne} Ausgabe${a.ohne > 1 ? 'n' : ''} ohne „Wofür“. <button class="link" data-k="wofuer-alle">Vorschläge für alle Buchungen ansehen</button></p>` : ''}
     ${a.nichtGezaehlt.length ? `<p class="hint">Nicht gezählt, weil es Geld zwischen deinen Konten ist: ${a.nichtGezaehlt.map((b) => `<button class="link" data-k="pruef-ansehen" data-arg="${h(b.nr)}">${h(b.nr)}</button> (${eur(b.betrag)})`).join(', ')}. Am besten als „Umbuchung“ ändern.</p>` : ''}
+    <button class="knopf leise" style="width:100%;margin-top:10px" data-k="ausgaben">Ausgaben-Übersicht mit Verlauf öffnen</button>
     <p class="hint">Gezählt nach „Gilt für“. Ohne „Wofür“ wird nach Posten sortiert („Gemeinschaftskonto“, „Trade Republic“, „Feste Posten“). Umbuchungen und Topf-Arten zählen nicht.</p></section>`;
 }
 function planIstHtml() {
@@ -233,7 +301,7 @@ function vorschau(r) {
 function buchungen() {
   const k = S.k;
   const q = S.suche.toLowerCase();
-  const wf = (b) => (b.art === 'Ausgabe' ? K.wofuerGruppe(b) : b.wofuer || '');
+  const wf = (b) => (b.art === 'Ausgabe' ? K.wofuerGruppe(b, k) : b.wofuer || '');
   const liste = k.buchungen.filter((b) => (!S.fMonat || b.giltFuer === S.fMonat) && (!S.fArt || b.art === S.fArt) && (!S.fWofuer || wf(b) === S.fWofuer)
     && (!q || [b.posten, b.gegen, b.beschreibung, b.kommentar, b.kategorie, b.nr, b.topf, b.wofuer].some((x) => (x || '').toLowerCase().includes(q))))
     .sort((a, b) => (b.datum || '').localeCompare(a.datum || '') || b.nr.localeCompare(a.nr));
@@ -242,7 +310,7 @@ function buchungen() {
     <div class="k-filter"><input type="search" id="k-suche" placeholder="Suchen …" value="${h(S.suche)}" autocomplete="off">
       <select id="k-fmonat"><option value="">alle Monate</option>${monate.map((m) => `<option value="${m}" ${m === S.fMonat ? 'selected' : ''}>${h(mn(m))}</option>`).join('')}</select>
       <select id="k-fart"><option value="">alle Arten</option>${K.ARTEN.map((a) => `<option ${a === S.fArt ? 'selected' : ''}>${a}</option>`).join('')}</select>
-      <select id="k-fwofuer"><option value="">Wofür: alle</option>${[...K.WOFUER, ...K.WOFUER_EXTRA].map((a) => `<option ${a === S.fWofuer ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
+      <select id="k-fwofuer"><option value="">Wofür: alle</option>${[...WL(), ...K.WOFUER_EXTRA].map((a) => `<option ${a === S.fWofuer ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
     <p class="hint" style="margin:6px 0 10px">${liste.length} Buchungen · Summe Wirkung aufs c24-Konto ${vz(Math.round(liste.reduce((s, b) => s + K.wirkungAuf(b, k.konto.name), 0) * 100) / 100)}</p>
     ${liste.length ? `<div class="buchungen">${liste.map((b) => buchungHtml(b)).join('')}</div>`
     : '<div class="leer">Keine Buchungen gefunden.</div>'}
@@ -253,11 +321,11 @@ function buchungHtml(b, topfName) {
   const fremd = !umb && b.konto && b.konto !== S.k.konto.name;
   const wirk = topfName ? K.topfeffekt(b) : null;
   const zeichen = topfName ? (wirk > 0 ? '+' : wirk < 0 ? '−' : '') : umb ? '⇄ ' : b.art === 'Einnahme' ? '+' : b.art === 'Ausgabe' ? '−' : '';
-  return `<div class="bu-wrap"><button class="bu" aria-expanded="false"><span class="t">${umb ? `${h(b.konto)} → ${h(b.gegen || '?')}` : h(b.posten || b.gegen || b.beschreibung || b.art)}${b.topf && !topfName && !umb ? ` <span class="chip aus-topf">${h(b.topf)}</span>` : ''}${fremd ? ` <span class="chip">${h(b.konto)}</span>` : ''}${b.wofuer ? ` <span class="chip wofuer">${h(b.wofuer)}</span>` : ''}</span>
+  return `<div class="bu-wrap"><button class="bu" aria-expanded="false"><span class="t">${umb ? `${h(b.konto)} → ${h(b.gegen || '?')}` : h(b.posten || b.gegen || b.beschreibung || b.art)}${b.topf && !topfName && !umb ? ` <span class="chip aus-topf">${h(b.topf)}</span>` : ''}${fremd ? ` <span class="chip">${h(b.konto)}</span>` : ''}${b.wofuer ? ` <span class="chip wofuer">${h(b.wofuer)}</span>` : ''}${K.istTeil(b) ? ` <span class="chip wofuer">${h(b.kommentar.match(/^Teil von P\d+/)[0])}</span>` : ''}</span>
       <span class="betrag ${(topfName ? wirk > 0 : b.art === 'Einnahme') ? 'plus' : ''}">${zeichen}${eur(b.betrag)}</span>
       <span class="r">${dk(b.datum)} · ${h(b.art)}${b.giltFuer && b.giltFuer !== b.datum?.slice(0, 7) ? ` <span class="okt">gilt für ${h(mn(b.giltFuer, false))}</span>` : ''}${b.gegen && b.posten && !umb ? ' · ' + h(b.gegen) : ''}</span>
       <span class="more"><dl>${[['Nummer', b.nr], ['Konto', umb ? `${b.konto} → ${b.gegen}` : b.konto], ['Datum', dl(b.datum)], ['Gilt für', mn(b.giltFuer)], ['Kategorie (Bank)', b.kategorie], ['Wofür', b.wofuer], ['Topf', b.topf], ['Beschreibung', b.beschreibung], ['Kommentar', b.kommentar], ['Quelle', b.quelle]].filter(([, w]) => w).map(([a, w]) => `<dt>${a}</dt><dd>${h(w)}</dd>`).join('')}</dl></span></button>
-      <div class="bu-aktion"><button class="knopf leise klein" data-k="bearbeiten" data-arg="${h(b.nr)}">Bearbeiten</button><button class="knopf leise klein" data-k="loeschen-frage" data-arg="${h(b.nr)}">Löschen</button></div></div>`;
+      <div class="bu-aktion"><button class="knopf leise klein" data-k="bearbeiten" data-arg="${h(b.nr)}">Bearbeiten</button>${b.art === 'Ausgabe' && !K.istTeil(b) ? `<button class="knopf leise klein" data-k="aufteilen" data-arg="${h(b.nr)}">Aufteilen</button>` : ''}<button class="knopf leise klein" data-k="loeschen-frage" data-arg="${h(b.nr)}">Löschen</button></div></div>`;
 }
 
 // ---------------------------------------------------------------- Töpfe (eigener Reiter)
@@ -305,6 +373,7 @@ function topfSeite(t) {
       <div class="rz summe"><span>Stand</span><b>${eur(t.stand)}</b></div></div>
       ${t.bemerkung ? `<p class="hint" style="margin-top:6px">${h(t.bemerkung)}</p>` : ''}
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="knopf leise klein" data-k="topf-buchen" data-arg="In Topf legen">In Topf legen</button><button class="knopf leise klein" data-k="topf-buchen" data-arg="Aus Topf nehmen">Aus Topf nehmen</button><button class="knopf leise klein" data-k="topf" data-arg="${t.zeile}">Topf ändern</button></div></section>
+    ${!t.frei ? `<p class="hint" style="margin:-4px 0 14px">Gehst du jeden Monat an diesen Topf (z. B. für etwas, das du laufend kaufst)? Dann passt ein Monatsbudget besser. <button class="link" data-k="topf-budget" data-arg="${h(t.name)}">In Monatsbudget umwandeln</button></p>` : ''}
     <section><h2>Buchungen</h2>${bu.length ? `<div class="buchungen">${bu.map((b) => buchungHtml(b, t.name).replace('class="bu-wrap"', `class="bu-wrap${nach(b) ? '' : ' alt'}"`)).join('')}</div><p class="hint" style="margin-top:6px">Ausgegraut: vor dem Stichtag, steckt schon im Anfangsbestand.</p>` : '<div class="leer">Noch keine Buchungen mit diesem Topf.</div>'}</section>`;
 }
 
@@ -383,7 +452,7 @@ function c24Html() {
         ${x.vorschlag.art === K.UMBUCHUNG ? `<div class="hint">Umbuchung ${h(x.vorschlag.konto)} → ${h(x.vorschlag.gegen)}</div>` : ''}
         <div class="zwei"><label class="feld" ${x.vorschlag.art === K.UMBUCHUNG ? 'hidden' : ''}><span>Posten</span><select name="p${i}">${['', ...postenListe].map((p) => `<option ${p === (x.vorschlag.posten || '') ? 'selected' : ''} value="${h(p)}">${h(p || '– variabel –')}</option>`).join('')}</select></label>
         <label class="feld"><span>Gilt für</span><input type="month" name="g${i}" value="${x.vorschlag.giltFuer}"></label></div>
-        ${x.vorschlag.art === 'Ausgabe' ? `<label class="feld"><span>Wofür</span><select name="w2${i}">${['', ...K.WOFUER].map((w) => `<option ${w === (x.vorschlag.wofuer || '') ? 'selected' : ''} value="${h(w)}">${h(w || '– nicht zugeordnet –')}</option>`).join('')}</select></label>` : ''}`}</div>`).join('')}</div>
+        ${x.vorschlag.art === 'Ausgabe' ? `<label class="feld"><span>Wofür</span><select name="w2${i}">${['', ...WL()].map((w) => `<option ${w === (x.vorschlag.wofuer || '') ? 'selected' : ''} value="${h(w)}">${h(w || '– nicht zugeordnet –')}</option>`).join('')}</select></label>` : ''}`}</div>`).join('')}</div>
     <div class="knoepfe"><button class="knopf" type="submit">Ausgewählte übernehmen</button></div></form></div>`;
 }
 const postenAuswahl = () => [...new Set([...S.k.einnahmen.map((e) => e.posten), ...S.k.kosten.map((x) => x.posten), ...K.POSTEN_EXTRA].filter(Boolean))];
@@ -409,7 +478,7 @@ function eintragenDialog(fehler, v0) {
     <div class="zwei">${feld('datum', 'Datum', v.datum, 'type="date"')}${feld('giltFuer', 'Gilt für', v.giltFuer, 'type="month"')}</div>
     ${kontoNamen.length > 1 ? `<div class="zwei">${auswahl('konto', umb ? 'Von Konto' : 'Konto', kontoNamen, v.konto)}<span class="nur-umb" ${umb ? '' : 'hidden'}>${auswahl('nach', 'Nach Konto', kontoNamen, nachVorschlag)}</span></div>` : `<input type="hidden" name="konto" value="${h(v.konto)}">`}
     <div class="nicht-umb" ${umb ? 'hidden' : ''}>${auswahl('posten', 'Posten', postenAuswahl(), v.posten, '– variabel –')}
-    ${auswahl('wofuer', 'Wofür', K.WOFUER, v.wofuer, '– nicht zugeordnet –')}
+    ${auswahl('wofuer', 'Wofür', WL(), v.wofuer, '– nicht zugeordnet –')}
     ${auswahl('topf', 'Topf', S.k.toepfe.map((t) => t.name), v.topf, 'kein Topf')}
     ${feld('gegen', 'Gegenüber', umb ? '' : v.gegen, 'placeholder="z. B. Aral"')}</div>${feld('beschreibung', 'Beschreibung (optional)', v.beschreibung)}${feld('kommentar', 'Kommentar (optional)', v.kommentar)}
     ${bearb ? `<input type="hidden" name="nr" value="${h(v.nr)}">` : ''}
@@ -425,8 +494,8 @@ function eintragenDialog(fehler, v0) {
   f.addEventListener('input', zus);
   // „Wofür“ vorschlagen, solange es noch niemand gewählt hat
   let wofuerVonHand = Boolean(v.wofuer);
-  const wofuerRaten = () => { if (wofuerVonHand || !f.wofuer) return; const x = Object.fromEntries(new FormData(f)); f.wofuer.value = K.wofuerVorschlag({ art: x.art, gegen: x.gegen, beschreibung: x.beschreibung, posten: x.posten }) || ''; };
-  f.addEventListener('change', (e) => { if (e.target.name === 'wofuer') wofuerVonHand = true; else if (['gegen', 'beschreibung', 'art', 'posten'].includes(e.target.name)) wofuerRaten(); });
+  const wofuerRaten = () => { if (wofuerVonHand || !f.wofuer) return; const x = Object.fromEntries(new FormData(f)); f.wofuer.value = K.wofuerVorschlag({ art: x.art, gegen: x.gegen, beschreibung: x.beschreibung, posten: x.posten }, S.k) || ''; };
+  f.addEventListener('change', (e) => { if (e.target.name === 'wofuer') { wofuerVonHand = true; if (K.istBudget(S.k, e.target.value) && f.posten && [...f.posten.options].some((o) => o.value === e.target.value) && (!f.posten.value || f.posten.value === 'Sonstiges')) f.posten.value = e.target.value; } else if (['gegen', 'beschreibung', 'art', 'posten'].includes(e.target.name)) wofuerRaten(); });
   f.addEventListener('change', (e) => { if (e.target.name === 'datum' || e.target.name === 'posten') f.giltFuer.value = K.giltFuer(f.datum.value || C.heute(), f.posten.value); zus(); });
   zus();
   const satz = document.getElementById('k-satz');
@@ -485,7 +554,7 @@ const OHNE = 'Ohne Vorschlag';
 function wofuerAlleDialog(neu = true) {
   if (neu || !S.wPlan) {
     S.wPlan = S.k.buchungen.filter((b) => !b.wofuer && b.art === 'Ausgabe' && b.posten !== K.GK_POSTEN && b.posten !== 'Trade Republic (extra)' && !K.falscheUmbuchungen(S.k).includes(b)).sort((x, y) => (x.datum || '').localeCompare(y.datum || '') || x.nr.localeCompare(y.nr))
-      .map((b) => ({ nr: b.nr, datum: b.datum, text: b.gegen || b.posten || b.beschreibung || '', betrag: b.betrag, wofuer: K.wofuerVorschlag(b) || '', vonHand: false }));
+      .map((b) => ({ nr: b.nr, datum: b.datum, text: b.gegen || b.posten || b.beschreibung || '', betrag: b.betrag, wofuer: K.wofuerVorschlag(b, S.k) || '', vonHand: false }));
     S.wWahl = new Set(); S.wOffen = new Set();
   } else {
     document.querySelectorAll('#menu details[data-gruppe]').forEach((d) => { if (d.open) S.wOffen.add(d.dataset.gruppe); else S.wOffen.delete(d.dataset.gruppe); });
@@ -493,7 +562,7 @@ function wofuerAlleDialog(neu = true) {
   const plan = S.wPlan;
   if (!plan.length) { dialog(`<h2 id="menu-titel">Alles zugeordnet</h2><p>Alle Ausgaben haben schon ein „Wofür“.</p><div class="knoepfe"><button class="knopf" id="schliessen">OK</button></div>`); return; }
   const mit = plan.filter((x) => x.wofuer);
-  const gruppen = [...K.WOFUER, OHNE].map((w) => [w, plan.filter((x) => (x.wofuer || OHNE) === w)]).filter(([, l]) => l.length);
+  const gruppen = [...WL(), OHNE].map((w) => [w, plan.filter((x) => (x.wofuer || OHNE) === w)]).filter(([, l]) => l.length);
   dialog(`<div class="k-wa"><h2 id="menu-titel">„Wofür“ nachtragen</h2>
     <p class="hint">Für <b>${mit.length}</b> von ${plan.length} Ausgaben steht ein „Wofür“ bereit. Hake an, was du ändern willst, dann „Ausgewählte ändern“. Gespeichert wird erst mit „Alle übernehmen“, und nur die Spalte „Wofür“.</p>
     ${gruppen.map(([w, l], gi) => `<details data-gruppe="${h(w)}" ${S.wOffen.has(w) ? 'open' : ''}><summary><b>${h(w)}</b> · ${l.length}× · ${eur(Math.round(l.reduce((s2, x) => s2 + x.betrag, 0) * 100) / 100)}</summary>
@@ -506,7 +575,7 @@ function wofuerAlleDialog(neu = true) {
 function wofuerAendernDialog() {
   const liste = S.wPlan.filter((x) => S.wWahl.has(x.nr));
   if (!liste.length) { wofuerAlleDialog(false); return; }
-  const opts = (wert) => `${K.WOFUER.map((w) => `<option ${w === wert ? 'selected' : ''}>${h(w)}</option>`).join('')}<option value="" ${!wert ? 'selected' : ''}>– leer lassen –</option>`;
+  const opts = (wert) => `${WL().map((w) => `<option ${w === wert ? 'selected' : ''}>${h(w)}</option>`).join('')}<option value="" ${!wert ? 'selected' : ''}>– leer lassen –</option>`;
   dialog(`<div class="k-wa"><h2 id="menu-titel">${liste.length} Buchung${liste.length > 1 ? 'en' : ''} ändern</h2>
     <p class="hint">Für jede Buchung einzeln wählen. Mit „Alle auf …“ kannst du alle auf einmal umstellen und danach einzelne wieder ändern.</p>
     ${liste.length > 1 ? `<label class="feld"><span>Alle auf …</span><select id="k-wa-alle"><option value="-">– einzeln wählen –</option>${opts('-')}</select></label>` : ''}
@@ -514,6 +583,51 @@ function wofuerAendernDialog() {
       <select id="k-wa-n-${h(x.nr)}" data-nr="${h(x.nr)}" aria-label="Wofür für ${h(x.nr)}">${opts(x.wofuer)}</select></div>`).join('')}</div>
     <div class="k-wa-leiste"><button class="knopf" data-k="w-setzen">Übernehmen</button><button class="knopf leise" data-k="w-zurueck">Zurück</button></div></div>`);
 }
+function topfBudgetDialog(name, fehler) {
+  const r = K.rechneKai(S.k, C.heute());
+  const t = r.toepfe.find((x) => x.name === name); if (!t) return;
+  const mitTopf = S.k.buchungen.filter((b) => b.topf === name && b.art !== K.UMBUCHUNG);
+  dialog(`<h2 id="menu-titel">„${h(name)}“ als Monatsbudget</h2>
+    <p>Statt zu sparen planst du jeden Monat <b>${eur(t.sparrate)}</b> für „${h(name)}“ ein. Die App zeigt dir, wie viel davon schon verbraucht ist und ob du drüber liegst.</p>
+    <div class="rechnung" style="margin:10px 0">
+      <div class="rz"><span>Topf „${h(name)}“<small>wird entfernt</small></span><b>${eur(t.stand)}</b></div>
+      <div class="rz"><span>Neues Budget<small>Kosten, Bereich „Budget“, ab ${h(mn(r.akt))}</small></span><b>${eur(t.sparrate)}/Monat</b></div>
+    </div>
+    <p class="hint">Der Stand des Topfs (${eur(t.stand)}) zählt danach wieder als frei. In der Vorschau zieht das Budget jeden Monat ${eur(t.sparrate)} ab, im laufenden Monat nur, was noch übrig ist.${mitTopf.length ? ` ${mitTopf.length} Buchung${mitTopf.length > 1 ? 'en' : ''} mit diesem Topf ${mitTopf.length > 1 ? 'zählen' : 'zählt'} danach zum Budget.` : ''} Vorher legt die App eine Sicherungskopie der Datei in OneDrive an.</p>
+    ${knoepfe(fehler, 'Umwandeln').replace('type="submit"', `type="button" data-k="topf-budget-los" data-arg="${h(name)}"`)}`);
+}
+function aufteilenDialog(nr, fehler, werte) {
+  const b = S.k.buchungen.find((x) => x.nr === nr); if (!b) return;
+  const teile = werte || [{ betrag: b.betrag, wofuer: b.wofuer || (K.istBudget(S.k, b.posten) ? b.posten : '') || K.wofuerVorschlag(b, S.k) || '' }, { betrag: '', wofuer: '' }];
+  const zeile = (t, i) => `<div class="k-wa-e"><div class="k-wa-e-kopf"><span>${i === 0 ? 'Teil 1 <small>(bleibt ' + h(b.nr) + ')</small>' : 'Teil ' + (i + 1)}</span>${i > 1 ? `<button type="button" class="link" data-k="teil-weg" data-arg="${i}">entfernen</button>` : ''}</div>
+    <div class="k-teil"><input name="tb${i}" inputmode="decimal" placeholder="0,00" value="${t.betrag === '' ? '' : String(t.betrag).replace('.', ',')}" aria-label="Betrag Teil ${i + 1}"><select name="tw${i}" aria-label="Wofür Teil ${i + 1}"><option value="">– Wofür –</option>${WL().map((w) => `<option ${w === t.wofuer ? 'selected' : ''}>${h(w)}</option>`).join('')}</select></div></div>`;
+  dialog(`<form id="k-aufteilen" novalidate><h2 id="menu-titel">Buchung aufteilen</h2>
+    <p class="hint">${h(b.nr)} · ${dl(b.datum)} · ${h(b.gegen || b.beschreibung || '')} · <b>${eur(b.betrag)}</b>. Teil 1 bleibt in der Buchung, jeder weitere Teil wird eine eigene Zeile („Teil von ${h(b.nr)}“). Zusammen bleibt es ${eur(b.betrag)}, der Kontostand ändert sich nicht.</p>
+    <input type="hidden" name="nr" value="${h(nr)}"><input type="hidden" name="n" value="${teile.length}">
+    <div class="k-wa-einzeln">${teile.map(zeile).join('')}</div>
+    ${teile.length < 5 ? '<button type="button" class="knopf leise klein" data-k="teil-dazu">+ weiterer Teil</button>' : ''}
+    <p class="k-teil-rest" id="k-teil-rest"></p>
+    ${knoepfe(fehler, 'Aufteilen')}</form>`);
+  const f = document.getElementById('k-aufteilen');
+  const rest = () => {
+    const n = Number(f.n.value); let sum = 0;
+    for (let i = 0; i < n; i++) sum += zahl(f['tb' + i].value) || 0;
+    const r2 = Math.round((b.betrag - sum) * 100) / 100;
+    document.getElementById('k-teil-rest').innerHTML = Math.abs(r2) < 0.005 ? '✓ Die Teile ergeben genau ' + eur(b.betrag) : r2 > 0 ? `Noch <b>${eur(r2)}</b> zu verteilen` : `<b>${eur(-r2)}</b> zu viel`;
+  };
+  f.addEventListener('input', rest);
+  // Teil 1 automatisch auf den Rest setzen, wenn ein anderer Teil geändert wird
+  f.addEventListener('change', (e) => {
+    if (!/^tb[1-9]$/.test(e.target.name)) return;
+    const n = Number(f.n.value); let andere = 0;
+    for (let i = 1; i < n; i++) andere += zahl(f['tb' + i].value) || 0;
+    const r1 = Math.round((b.betrag - andere) * 100) / 100;
+    if (r1 > 0) f.tb0.value = String(r1.toFixed(2)).replace('.', ',');
+    rest();
+  });
+  rest();
+}
+const teileAusForm = (f) => Array.from({ length: Number(f.n.value) }, (_, i) => ({ betrag: f['tb' + i].value.trim() === '' ? '' : zahl(f['tb' + i].value), wofuer: f['tw' + i].value }));
 function kontoDialog(zeile, fehler) {
   const k = eigeneKonten().find((x) => x.zeile === Number(zeile)) || S.k.konto;
   dialog(`<form id="k-konto" novalidate><h2 id="menu-titel">Kontostand ${h(k.name)}</h2><p class="hint">Stand laut Bank am Ende des Stichtags. Buchungen bis dahin ändern den Stand nicht, zählen aber im Ist.</p>
@@ -563,8 +677,44 @@ export async function klick(t) {
     case 'pruefen': pruefDialog(); return true;
     case 'pruef-ansehen': if (C.menu.open) C.menu.close(); S.suche = arg; S.fMonat = ''; S.fArt = ''; S.fWofuer = ''; S.tab = 'k-buchungen'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
     case 'wzeit': S.wZeit = arg; C.zeichne(); return true;
-    case 'wofuer-filter': S.fWofuer = arg; S.suche = ''; S.fArt = ''; S.fMonat = S.wZeit === 'monat' ? C.heute().slice(0, 7) : ''; S.tab = 'k-buchungen'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'wofuer-filter': S.fWofuer = arg; S.suche = ''; S.fArt = ''; S.fMonat = S.tab === 'k-ausgaben' ? S.aMonat : S.wZeit === 'monat' ? C.heute().slice(0, 7) : ''; S.tab = 'k-buchungen'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
     case 'wofuer-alle': wofuerAlleDialog(); return true;
+    case 'topf-budget': topfBudgetDialog(arg); return true;
+    case 'aufteilen': aufteilenDialog(arg); return true;
+    case 'teil-dazu': case 'teil-weg': {
+      const f = document.getElementById('k-aufteilen'); const tl = teileAusForm(f);
+      if (a === 'teil-dazu') tl.push({ betrag: '', wofuer: '' }); else tl.splice(Number(arg), 1);
+      aufteilenDialog(f.nr.value, null, tl); return true;
+    }
+    case 'ausgaben': S.tab = 'k-ausgaben'; S.aMonat = S.aMonat || C.heute().slice(0, 7); C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'a-monat': S.aMonat = arg; C.zeichne(); return true;
+    case 'a-zurueck': S.tab = 'k-uebersicht'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'topf-budget-los': {
+      const name = arg;
+      const r = K.rechneKai(S.k, C.heute()); const tp = r.toepfe.find((x) => x.name === name);
+      if (!tp) return true;
+      if (K.istBudget(S.k, name)) { topfBudgetDialog(name, `Ein Budget „${name}“ gibt es schon.`); return true; }
+      const mitTopf = S.k.buchungen.filter((b) => b.topf === name && b.art !== K.UMBUCHUNG);
+      await schreiben(async (api) => {
+        await C.od.sicherungAnlegen(S.ort, 'vor-Budget-' + name.replace(/[^A-Za-z0-9äöüÄÖÜß-]+/g, '_'));
+        const [tv, tb] = K.BEREICHE.toepfe;
+        const tn = (await api.lies('Töpfe', `B${tv}:B${tb}`)).values.map((x) => String(x[0] ?? ''));
+        const ti = tn.indexOf(name); if (ti < 0) throw new Error(`Topf „${name}“ nicht gefunden.`);
+        const [kv, kb] = K.BEREICHE.kosten;
+        const kn = (await api.lies('Kosten', `B${kv}:B${kb}`)).values; const ki = kn.findIndex((x) => x[0] === '' || x[0] == null);
+        if (ki < 0) throw new Error('Im Blatt „Kosten“ ist keine Zeile mehr frei.');
+        const kz = kv + ki;
+        const ids = (await api.lies('Kosten', `A${kv}:A${kb}`)).values.map((x) => String(x[0] || '')).filter((x) => /^K\d+$/.test(x)).map((x) => Number(x.slice(1)));
+        await api.schreib('Kosten', `A${kz}:J${kz}`, [['K' + String(Math.max(0, ...ids) + 1).padStart(2, '0'), name, K.BUDGET, tp.sparrate, 'monatlich', '', '', S.k.konto.name, mSer(r.akt), '']]);
+        await api.schreib('Kosten', `N${kz}`, [[`Monatsbudget, vorher Topf (umgestellt ${dl(C.heute())}).`]]);
+        for (const b of mitTopf) { const z = await zeileVonNr(api, b.nr); await api.schreib('Buchungen', `J${z}`, [['']]); if (!b.posten || b.posten === 'Sonstiges') await api.schreib('Buchungen', `I${z}`, [[name]]); }
+        const tz = tv + ti;
+        await api.schreib('Töpfe', `A${tz}:F${tz}`, [['', '', '', '', '', '']]);
+        await api.schreib('Töpfe', `J${tz}:K${tz}`, [['', '']]);
+      }, `„${name}“ ist jetzt ein Monatsbudget (${eur(tp.sparrate)}). Sicherung liegt in OneDrive.`, { knopf: t, dialogFehler: (fe) => topfBudgetDialog(name, fe) });
+      S.topf = null;
+      return true;
+    }
     case 'w-aendern': wofuerAlleDialog(false); wofuerAendernDialog(); return true;
     case 'w-zurueck': wofuerAlleDialog(false); return true;
     case 'w-setzen': {
@@ -590,6 +740,12 @@ export async function klick(t) {
         let n = 0;
         const werte = a.slice(0, letzte + 1).map((nr, i) => { if (!q[i] && neu.has(nr)) { n++; return [neu.get(nr)]; } return [q[i]]; });
         if (n) await api.schreib('Buchungen', `${W}${von}:${W}${von + letzte}`, werte);
+        // Budget als „Wofür“ → auch Posten (Spalte I), wenn dort noch nichts steht
+        const bud = plan.filter((p) => K.istBudget(S.k, p.wofuer));
+        if (bud.length) {
+          const iw = (await api.lies('Buchungen', `I${von}:I${von + letzte}`)).values.map((r) => String(r[0] ?? ''));
+          for (const p of bud) { const i = a.indexOf(p.nr); if (i >= 0 && (!iw[i] || iw[i] === 'Sonstiges')) await api.schreib('Buchungen', `I${von + i}`, [[p.wofuer]]); }
+        }
         return n;
       }, (n) => `„Wofür“ bei ${n} Buchungen eingetragen.`, { knopf: t });
       S.wPlan = null;
@@ -663,6 +819,7 @@ export async function absenden(form) {
       const konto = x.konto || S.k.konto.name;
       const b = umb ? { datum: x.datum, giltFuer: x.giltFuer, art: x.art, konto, gegen: x.nach, betrag, posten: '', topf: '', beschreibung: x.beschreibung.trim(), kommentar: x.kommentar.trim() }
         : { datum: x.datum, giltFuer: x.giltFuer, art: x.art, konto, gegen: (x.gegen || '').trim(), betrag, posten: x.posten, topf: x.topf, beschreibung: x.beschreibung.trim(), kommentar: x.kommentar.trim(), wofuer: x.wofuer || '' };
+      if (b.wofuer) budgetPosten(b);
       if (x.nr) {
         const alt = S.k.buchungen.find((y) => y.nr === x.nr);
         await schreiben(async (api) => {
@@ -672,6 +829,27 @@ export async function absenden(form) {
       } else {
         await schreiben(async (api) => (await buchungenAnhaengen(api, [{ ...b, quelle: 'manuell' }]))[0], (nr) => `${nr} eingetragen: ${b.posten || b.gegen || b.art}, ${eur(betrag)}.`, { knopf, dialogFehler: (fe) => eintragenDialog(fe, { ...x }) });
       }
+      return true;
+    }
+    case 'k-aufteilen': {
+      const b = S.k.buchungen.find((y) => y.nr === x.nr);
+      const alle = teileAusForm(form);
+      const tl = alle.filter((t) => t.betrag !== '');
+      const f = K.aufteilungPruefen(b, tl);
+      if (f) { aufteilenDialog(x.nr, f, alle); return true; }
+      const [t1, ...rest] = tl;
+      const p1 = K.istBudget(S.k, b.posten) && b.posten !== t1.wofuer ? '' : b.posten || '';
+      const neue = rest.map((t) => budgetPosten({ datum: b.datum, giltFuer: b.giltFuer, art: 'Ausgabe', konto: b.konto, gegen: b.gegen, betrag: t.betrag, kategorie: b.kategorie,
+        posten: '', topf: b.topf, beschreibung: b.beschreibung, kommentar: `Teil von ${b.nr}`, quelle: 'Aufteilung', importId: '', wofuer: t.wofuer }));
+      await schreiben(async (api) => {
+        const z = await zeileVonNr(api, b.nr);
+        const g = (await api.lies('Buchungen', `G${z}`)).values[0][0];
+        if (Math.abs(Number(g) - b.betrag) > 0.005) throw new Error(`${b.nr} hat in der Datei gerade einen anderen Betrag. Bitte neu laden.`);
+        await api.schreib('Buchungen', `G${z}`, [[t1.betrag]]);
+        await api.schreib('Buchungen', `I${z}`, [[budgetPosten({ wofuer: t1.wofuer, posten: p1 }).posten || '']]);
+        await wofuerKopf(api); await api.schreib('Buchungen', `${W}${z}`, [[t1.wofuer || '']]);
+        await buchungenAnhaengen(api, neue);
+      }, `${b.nr} aufgeteilt in ${tl.length} Teile.`, { knopf, dialogFehler: (fe) => aufteilenDialog(x.nr, fe, alle) });
       return true;
     }
     case 'k-pruefen': {
@@ -754,6 +932,7 @@ export async function absenden(form) {
         if (r.status === 'importiert' || r.status === 'gegenbuchung' || !x['w' + i]) return;
         if (r.status === 'ergaenzen') ergaenzen.push({ nr: r.treffer.nr, id: r.z.id });
         else neu.push({ ...r.vorschlag, posten: r.vorschlag.art === K.UMBUCHUNG ? null : x['p' + i] || null, giltFuer: x['g' + i] || r.vorschlag.giltFuer, wofuer: r.vorschlag.art === 'Ausgabe' ? x['w2' + i] || '' : '' });
+        budgetPosten(neu[neu.length - 1]);
       });
       if (!neu.length && !ergaenzen.length) return true;
       dialog(`<h2 id="menu-titel">Übernehmen?</h2><p>${neu.length} neue Buchungen eintragen${ergaenzen.length ? ` und bei ${ergaenzen.length} von Hand eingetragenen die Import-ID ergänzen` : ''}.</p>

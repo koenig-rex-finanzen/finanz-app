@@ -197,7 +197,7 @@ export function kontenPruefen(k, bank) {
       // 1. Buchung, deren Betrag genau der Differenz entspricht (doppelt drin, Vorzeichen falsch oder fehlt auf dem Auszug)
       const passt = (b) => Math.abs(Math.abs(wirkungAuf(b, kt.name)) - Math.abs(diff)) < 0.005 || Math.abs(Math.abs(wirkungAuf(b, kt.name)) * 2 - Math.abs(diff)) < 0.005;
       const doppelt = new Set();
-      for (const b of nach) for (const c of nach) if (b.nr < c.nr && Math.abs(wirkungAuf(b, kt.name) - wirkungAuf(c, kt.name)) < 0.005 && Math.abs(tagNr(b.datum) - tagNr(c.datum)) <= 3) { doppelt.add(b); doppelt.add(c); }
+      for (const b of nach) for (const c of nach) if (b.nr < c.nr && !istTeil(b) && !istTeil(c) && Math.abs(wirkungAuf(b, kt.name) - wirkungAuf(c, kt.name)) < 0.005 && Math.abs(tagNr(b.datum) - tagNr(c.datum)) <= 3) { doppelt.add(b); doppelt.add(c); }
       verdacht = nach.filter((b) => passt(b) || doppelt.has(b)).map((b) => ({ ...b, wirkung: wirkungAuf(b, kt.name),
         grund: [passt(b) ? 'Betrag passt zur Differenz' : null, doppelt.has(b) ? 'gleicher Betrag innerhalb von 3 Tagen' : null].filter(Boolean).join(' · ') }))
         .sort((a, b) => (b.grund.includes('Differenz') - a.grund.includes('Differenz')) || b.datum.localeCompare(a.datum));
@@ -229,8 +229,15 @@ const WOFUER_REGELN = [
   ['Freizeit', /freizeit|kino|schwimmbad|zoo|museum|tickets?\b|eventim|steam|playstation|nintendo/i],
 ];
 /** Vorschlag fürs „Wofür“ aus Gegenüber, Beschreibung und Bank-Kategorie. Nur für Ausgaben ohne festen Posten. */
-export function wofuerVorschlag(b) {
+export function wofuerVorschlag(b, k) {
   if (!b || b.art !== 'Ausgabe' || b.posten === GK_POSTEN || b.posten === 'Trade Republic (extra)') return null;
+  if (k && b.posten && istBudget(k, b.posten)) return b.posten;
+  // Gelernt: was zuletzt beim selben Gegenüber gewählt wurde
+  const g = (b.gegen || '').trim().toLowerCase();
+  if (k && g.length > 2) {
+    const frueher = k.buchungen.filter((x) => x.wofuer && x !== b && x.nr !== b.nr && (x.gegen || '').trim().toLowerCase() === g).sort((x, y) => (y.datum || '').localeCompare(x.datum || ''))[0];
+    if (frueher) return frueher.wofuer;
+  }
   const text = [b.gegen, b.beschreibung, b.kategorie].filter(Boolean).join(' ');
   for (const [w, re] of WOFUER_REGELN) if (re.test(text)) return w;
   return null;
@@ -242,9 +249,81 @@ export function wofuerVorschlag(b) {
  * Buchungen, die eigentlich Umbuchungen sind (falscheUmbuchungen), zählen nicht.
  */
 export const WOFUER_EXTRA = ['Gemeinschaftskonto', 'Trade Republic', 'Feste Posten', 'Nicht zugeordnet'];
+
+// ---------------------------------------------------------------- Budgets und Aufteilen
+
+/** Bereich in Kosten!C, der einen Posten zum Monatsbudget macht (z. B. Dampfen). Plan = Budget, Ist = Ausgaben mit diesem Posten. */
+export const BUDGET = 'Budget';
+export const budgets = (k) => (k.kosten || []).filter((x) => x.posten && x.bereich === BUDGET);
+/** Auswahl fürs „Wofür“: erst die Budgets, dann die feste Liste. Ein Budget als „Wofür“ setzt auch den Posten. */
+export const wofuerListe = (k) => [...new Set([...budgets(k).map((x) => x.posten), ...WOFUER])];
+export const istBudget = (k, name) => budgets(k).some((x) => x.posten === name);
+
+/** Teil-Zeilen einer aufgeteilten Buchung: Quelle „Aufteilung“, Kommentar beginnt mit „Teil von P0001“. */
+export const istTeil = (b) => b.quelle === 'Aufteilung' && /^Teil von P\d+/.test(b.kommentar || '');
+export const teilVon = (b) => (istTeil(b) ? b.kommentar.match(/^Teil von (P\d+)/)[1] : null);
+export function teileVon(k) {
+  const m = new Map();
+  for (const b of k.buchungen) { const v = teilVon(b); if (v) m.set(v, [...(m.get(v) || []), b]); }
+  return m;
+}
+/**
+ * Prüft eine Aufteilung. teile = [{betrag, wofuer}], der erste Teil bleibt in der Original-Zeile.
+ * @returns {string|null} Fehlertext
+ */
+export function aufteilungPruefen(b, teile) {
+  if (!b || b.art !== 'Ausgabe') return 'Aufteilen geht nur bei Ausgaben.';
+  if (istTeil(b)) return 'Das ist schon ein Teil. Bitte die ursprüngliche Buchung aufteilen.';
+  if (teile.length < 2) return 'Bitte mindestens zwei Teile angeben.';
+  if (teile.some((t) => !(t.betrag > 0))) return 'Jeder Teil braucht einen Betrag über 0.';
+  const sum = r2(teile.reduce((a, t) => a + t.betrag, 0));
+  if (Math.abs(sum - b.betrag) >= 0.005) return `Die Teile ergeben ${sum.toFixed(2).replace('.', ',')} €, die Buchung hat ${b.betrag.toFixed(2).replace('.', ',')} €.`;
+  return null;
+}
+
+const tageImMonat = (m) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
+/**
+ * Budget im Monat m: Plan, verbraucht, übrig/drüber und wie viel bis heute „dran“ wäre (gleichmäßig über den Monat).
+ * heute = 'JJJJ-MM-TT' (nur für den laufenden Monat wichtig).
+ */
+export function budgetStand(k, x, m, heute) {
+  const p = plan(x, m);
+  const ausg = k.buchungen.filter((b) => b.posten === x.posten && b.giltFuer === m && b.art === 'Ausgabe');
+  const verbraucht = summe(ausg, (b) => b.betrag);
+  const lauf = heute && heute.slice(0, 7) === m;
+  const anteil = lauf ? Math.min(1, Number(heute.slice(8, 10)) / tageImMonat(m)) : (heute && m < heute.slice(0, 7) ? 1 : 0);
+  return { name: x.posten, plan: p, verbraucht, rest: r2(p - verbraucht), drueber: r2(Math.max(0, verbraucht - p)), anteil, sollBisHeute: r2(p * anteil), anzahl: ausg.length, buchungen: ausg };
+}
+
+/** Summen je Gruppe (wofuerGruppe) für mehrere Monate: {monate, gruppen: [{name, werte: [..], summe}]} */
+export function wofuerVerlauf(k, monate) {
+  const namen = new Set(eigeneKonten(k).map((kt) => kt.name));
+  const falsch = new Set(falscheUmbuchungen(k));
+  const g = new Map();
+  for (const b of k.buchungen) {
+    if (b.art !== 'Ausgabe' || !namen.has(b.konto) || falsch.has(b) || !monate.includes(b.giltFuer)) continue;
+    const n = wofuerGruppe(b, k);
+    const x = g.get(n) || { name: n, werte: monate.map(() => 0) };
+    const i = monate.indexOf(b.giltFuer); x.werte[i] = r2(x.werte[i] + b.betrag); g.set(n, x);
+  }
+  return { monate, gruppen: [...g.values()].map((x) => ({ ...x, summe: r2(x.werte.reduce((a, v) => a + v, 0)) })) };
+}
+
+/**
+ * Referenzwert je Gruppe: Durchschnitt der letzten 3 vollen Monate vor akt, in denen schon mit „Wofür“ gearbeitet wurde.
+ * Nur ein Anhaltspunkt, kein Plan. Erst ab 2 solchen Monaten.
+ */
+export function referenzWerte(k, akt) {
+  const vorher = [3, 2, 1].map((i) => monatPlus(akt, -i));
+  const genutzt = vorher.filter((m) => k.buchungen.some((b) => b.giltFuer === m && b.wofuer));
+  if (genutzt.length < 2) return { monate: genutzt, werte: new Map() };
+  const v = wofuerVerlauf(k, genutzt);
+  return { monate: genutzt, werte: new Map(v.gruppen.map((x) => [x.name, r2(x.summe / genutzt.length)])) };
+}
 /** Gruppe einer Ausgabe in der Auswertung: „Wofür“, sonst nach Posten, sonst „Nicht zugeordnet“. */
-export function wofuerGruppe(b) {
+export function wofuerGruppe(b, k) {
   if (b.wofuer) return b.wofuer;
+  if (k && b.posten && istBudget(k, b.posten)) return b.posten;
   if (b.posten === GK_POSTEN) return 'Gemeinschaftskonto';
   if (b.posten === 'Trade Republic (extra)') return 'Trade Republic';
   if (b.posten && b.posten !== 'Sonstiges') return 'Feste Posten';
@@ -256,13 +335,13 @@ export function wofuerAuswertung(k, von, bis) {
   const liste = k.buchungen.filter((b) => b.art === 'Ausgabe' && namen.has(b.konto) && !falsch.has(b) && b.giltFuer && b.giltFuer >= von && b.giltFuer <= bis);
   const gruppen = new Map();
   for (const b of liste) {
-    const g = wofuerGruppe(b);
+    const g = wofuerGruppe(b, k);
     const x = gruppen.get(g) || { name: g, summe: 0, anzahl: 0 };
     x.summe = r2(x.summe + b.betrag); x.anzahl++; gruppen.set(g, x);
   }
   const rang = (n) => WOFUER_EXTRA.indexOf(n);
   const reihen = [...gruppen.values()].sort((a, b) => rang(a.name) - rang(b.name) || b.summe - a.summe);
-  return { von, bis, gesamt: summe(liste, (b) => b.betrag), reihen, ohne: liste.filter((b) => wofuerGruppe(b) === 'Nicht zugeordnet').length, nichtGezaehlt: [...falsch].filter((b) => b.giltFuer >= von && b.giltFuer <= bis) };
+  return { von, bis, gesamt: summe(liste, (b) => b.betrag), reihen, ohne: liste.filter((b) => wofuerGruppe(b, k) === 'Nicht zugeordnet').length, nichtGezaehlt: [...falsch].filter((b) => b.giltFuer >= von && b.giltFuer <= bis) };
 }
 
 /** Plan/Ist eines Monats (wie Start, Abschnitt Plan/Ist). */
@@ -374,7 +453,8 @@ export function vorschlag(z, kk, { gkEndung, regeln = [] } = {}) {
     beschreibung: [z.zweck || [z.typ, z.karteneinsatz].filter(Boolean).join(' '), z.empfaenger].filter(Boolean).join(' · ').slice(0, 250),
     kommentar: null, quelle: 'CSV', importId: z.id,
   };
-  v.wofuer = wofuerVorschlag(v);
+  v.wofuer = wofuerVorschlag(v, kk);
+  if (v.wofuer && !v.posten && istBudget(kk, v.wofuer)) v.posten = v.wofuer;
   return v;
 }
 
@@ -392,7 +472,10 @@ export async function abgleichC24(zeilen, kk, opt = {}) {
   const benutzt = new Set();
   const sp = kk.spartopf;
   const c24 = kk.konto.name;
-  const signiertAuf = (b, name) => (b.art === 'Einnahme' || b.art === 'Ausgabe' || b.art === UMBUCHUNG) && (b.konto === name || b.gegen === name) ? wirkungAuf(b, name) : null;
+  const teile = teileVon(kk);
+  // Aufgeteilte Buchungen zählen beim Abgleich mit ihrer ursprünglichen Summe; die Teil-Zeilen selbst nie.
+  const signiertAuf = (b, name) => (b.art === 'Einnahme' || b.art === 'Ausgabe' || b.art === UMBUCHUNG) && (b.konto === name || b.gegen === name) && !istTeil(b)
+    ? r2(wirkungAuf(b, name) + (teile.get(b.nr) || []).reduce((a, t) => a + wirkungAuf(t, name), 0)) : null;
   return zeilen.map((z) => {
     if (ids.has(z.id)) return { z, status: 'importiert' };
     const eigen = sp && aufSpartopf(z, sp) ? sp.name : c24;
@@ -404,7 +487,7 @@ export async function abgleichC24(zeilen, kk, opt = {}) {
     }
     const signiert = (b) => signiertAuf(b, eigen);
     const kand = kk.buchungen.filter((b) => !benutzt.has(b) && !b.importId && signiert(b) != null && Math.abs(signiert(b) - z.betrag) < 0.005 && b.datum && Math.abs(tag(b.datum) - tag(z.datum)) <= 3);
-    const csvGleich = kk.buchungen.filter((b) => b.importId && b.datum === z.datum && Math.abs(signiert(b) - z.betrag) < 0.005);
+    const csvGleich = kk.buchungen.filter((b) => b.importId && signiert(b) != null && b.datum === z.datum && Math.abs(signiert(b) - z.betrag) < 0.005);
     const v = vorschlag(z, kk, opt);
     if (kand.length === 1 && !csvGleich.length) { benutzt.add(kand[0]); return { z, status: 'ergaenzen', treffer: kand[0], vorschlag: v }; }
     if (kand.length > 1 || csvGleich.length) return { z, status: 'pruefen', treffer: kand[0] || csvGleich[0], grund: kand.length > 1 ? 'mehrere passende Buchungen' : 'gleicher Tag und Betrag schon aus einem Export da', vorschlag: v };

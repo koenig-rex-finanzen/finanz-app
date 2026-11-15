@@ -494,3 +494,29 @@ export async function kaiDateiFinden(ordner) {
   const it = treffer?.value?.find((k) => k.name === KAI_DATEI);
   return it ? { ort: ortVon(it), item: it } : null;
 }
+
+/**
+ * Sicherungskopie einer Datei im selben Ordner anlegen (Name wie „Kai_Privat_Sicherung_2026-11-15_140501_anlass.xlsx“)
+ * und warten, bis sie da ist. Wirft einen Fehler, wenn sie nicht fertig wird – dann darf nichts geändert werden.
+ */
+export async function sicherungAnlegen(ort, anlass) {
+  const it = await graph(`/drives/${ort.driveId}/items/${ort.itemId}?$select=name,parentReference`);
+  if (!it?.parentReference) throw new Error('Datei für die Sicherung nicht gefunden.');
+  const d = new Date(); const z = (n) => String(n).padStart(2, '0');
+  const name = `${it.name.replace(/\.xlsx$/i, '')}_Sicherung_${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}_${anlass}.xlsx`;
+  const pr = it.parentReference;
+  const r = await graph(`/drives/${ort.driveId}/items/${ort.itemId}/copy`, {
+    roh: true, method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentReference: { driveId: pr.driveId, id: pr.id }, name }),
+  });
+  const monitor = r.headers.get('Location');
+  for (let i = 0; i < 24; i++) {
+    await new Promise((ok) => setTimeout(ok, 1500));
+    if (monitor) {
+      try { const s = await (await fetch(monitor)).json(); if (s.status === 'failed') throw new Error('Die Sicherungskopie ist fehlgeschlagen. Es wurde nichts geändert.'); } catch (e) { if (/fehlgeschlagen/.test(e.message)) throw e; }
+    }
+    const da = await graph(`/drives/${pr.driveId}/items/${pr.id}:/${encodeURIComponent(name)}?$select=id,size`).catch(() => null);
+    if (da?.id && da.size > 0) return name;
+  }
+  throw new Error('Die Sicherungskopie wurde nicht rechtzeitig fertig. Es wurde nichts geändert.');
+}

@@ -43,6 +43,9 @@ const NATALIE = {
 };
 
 const KAI = {
+  'Budgets': 'Geld, das du jeden Monat für etwas einplanst (z. B. Dampfen). Die Vorschau zieht es jeden Monat ab. Der Ring zeigt, wie viel schon weg ist; liegst du drüber, wird es rot und steht in der Warnung oben.',
+  'Ausgaben': 'Wofür dein Geld in einem Monat draufging, mit Budgets, Referenzwerten und Verlauf. Mit den Pfeilen wechselst du den Monat.',
+  'Verlauf': 'Die letzten 6 Monate je Gruppe. Jede Zeile hat ihren eigenen Maßstab, damit man auch kleine Beträge vergleichen kann.',
   'Aktuelle Kontostände': 'So viel liegt laut deinen Buchungen gerade auf c24 und dem Spartopf. Mit „Mit Bank-App vergleichen“ prüfst du, ob es zur c24-App passt. Weicht es ab, zeigt die App Buchungen, die doppelt sein könnten oder fehlen.',
   'Wofür': 'Wofür das Geld ausgegeben wurde, z. B. Freizeit oder Amazon. Das ist kein Topf und kein Posten, sondern nur zum Auswerten. Die App schlägt etwas vor, du kannst es ändern.',
   'Wofür ausgegeben': 'Alle Ausgaben nach „Wofür“ sortiert. Ohne „Wofür“ sortiert die App nach Posten: Überweisungen aufs Gemeinschaftskonto, Trade Republic und „Feste Posten“ (z. B. Claude-Abo). Antippen zeigt die Buchungen.',
