@@ -660,3 +660,12 @@ nav.sechs button svg{width:22px;height:22px}
 .k-pr-liste details{background:var(--surface);border-radius:12px;padding:8px 10px}
 .k-pr-liste summary{cursor:pointer}
 .k-pr-liste details .k-pr-b{padding:5px 0;background:none}
+.k-wa details{background:var(--sunk);border-radius:14px;padding:10px 12px;margin:8px 0}
+.k-wa summary{cursor:pointer;padding:2px 0}
+.k-wa-zeile{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:8px 2px;border-top:1px solid var(--line);font-size:14.5px;cursor:pointer}
+.k-wa-zeile input{width:22px;height:22px;margin:0;accent-color:var(--akzent,var(--neon))}
+.k-wa-zeile b{white-space:nowrap}
+.k-wa-zeile.alle{grid-template-columns:auto 1fr;color:var(--muted);font-size:13.5px}
+.k-wa-neu{font-style:normal;font-size:11.5px;font-weight:700;color:var(--neon);margin-left:4px}
+.k-wa-leiste{position:sticky;bottom:-1px;display:grid;gap:8px;padding:12px 0 4px;margin-top:8px;background:var(--surface)}
+.k-wa-leiste .knopf:disabled{opacity:.45}

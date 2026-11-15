@@ -480,16 +480,37 @@ function pruefErgebnis(e) {
   dialog(`<h2 id="menu-titel">${e.ok ? '✓ Alles stimmt' : 'Abweichung gefunden'}</h2>${e.konten.map(zeile).join('')}${falsch}
     <div class="knoepfe"><button class="knopf" id="schliessen">Fertig</button></div>`);
 }
-function wofuerAlleDialog() {
-  const plan = S.k.buchungen.filter((b) => !b.wofuer && b.art === 'Ausgabe').map((b) => ({ ...b, wofuer: K.wofuerVorschlag(b) })).filter((b) => b.wofuer);
-  S.wPlan = plan.map((b) => ({ nr: b.nr, wofuer: b.wofuer }));
-  const offen = S.k.buchungen.filter((b) => !b.wofuer && b.art === 'Ausgabe').length - plan.length;
-  if (!plan.length) { dialog(`<h2 id="menu-titel">Keine Vorschläge</h2><p>Für die Ausgaben ohne „Wofür“ hat die App keinen Vorschlag. Du kannst sie einzeln über „Bearbeiten“ zuordnen.</p><div class="knoepfe"><button class="knopf" id="schliessen">OK</button></div>`); return; }
-  const gruppen = K.WOFUER.map((w) => [w, plan.filter((b) => b.wofuer === w)]).filter(([, l]) => l.length);
-  dialog(`<h2 id="menu-titel">„Wofür“ nachtragen</h2><p>Für <b>${plan.length}</b> Ausgaben hat die App einen Vorschlag. Es wird nur die Spalte „Wofür“ gefüllt, sonst ändert sich nichts. Ausgaben, bei denen schon etwas steht, bleiben, wie sie sind.</p>
-    <div class="k-pr-liste">${gruppen.map(([w, l]) => `<details><summary><b>${h(w)}</b> · ${l.length}× · ${eur(l.reduce((a, b) => a + b.betrag, 0))}</summary>${l.map((b) => `<div class="k-pr-b"><span>${h(b.nr)} · ${dk(b.datum)} · ${h(b.gegen || b.posten || '')}</span><b>${eur(b.betrag)}</b></div>`).join('')}</details>`).join('')}</div>
-    ${offen > 0 ? `<p class="hint">${offen} Ausgaben ohne Vorschlag bleiben leer. Die kannst du einzeln über „Bearbeiten“ zuordnen.</p>` : ''}
-    <div class="knoepfe"><button class="knopf" data-k="wofuer-alle-los">Alle ${plan.length} übernehmen</button><button class="knopf leise" id="schliessen">Abbrechen</button></div>`);
+/** „Wofür“ nachtragen: Liste mit Vorschlägen, Buchungen anhaken → „Ausgewählte ändern“ → zurück zur neu sortierten Liste → alle übernehmen. */
+const OHNE = 'Ohne Vorschlag';
+function wofuerAlleDialog(neu = true) {
+  if (neu || !S.wPlan) {
+    S.wPlan = S.k.buchungen.filter((b) => !b.wofuer && b.art === 'Ausgabe' && b.posten !== K.GK_POSTEN && b.posten !== 'Trade Republic (extra)' && !K.falscheUmbuchungen(S.k).includes(b)).sort((x, y) => (x.datum || '').localeCompare(y.datum || '') || x.nr.localeCompare(y.nr))
+      .map((b) => ({ nr: b.nr, datum: b.datum, text: b.gegen || b.posten || b.beschreibung || '', betrag: b.betrag, wofuer: K.wofuerVorschlag(b) || '', vonHand: false }));
+    S.wWahl = new Set(); S.wOffen = new Set();
+  } else {
+    document.querySelectorAll('#menu details[data-gruppe]').forEach((d) => { if (d.open) S.wOffen.add(d.dataset.gruppe); else S.wOffen.delete(d.dataset.gruppe); });
+  }
+  const plan = S.wPlan;
+  if (!plan.length) { dialog(`<h2 id="menu-titel">Alles zugeordnet</h2><p>Alle Ausgaben haben schon ein „Wofür“.</p><div class="knoepfe"><button class="knopf" id="schliessen">OK</button></div>`); return; }
+  const mit = plan.filter((x) => x.wofuer);
+  const gruppen = [...K.WOFUER, OHNE].map((w) => [w, plan.filter((x) => (x.wofuer || OHNE) === w)]).filter(([, l]) => l.length);
+  dialog(`<div class="k-wa"><h2 id="menu-titel">„Wofür“ nachtragen</h2>
+    <p class="hint">Für <b>${mit.length}</b> von ${plan.length} Ausgaben steht ein „Wofür“ bereit. Hake an, was du ändern willst, dann „Ausgewählte ändern“. Gespeichert wird erst mit „Alle übernehmen“, und nur die Spalte „Wofür“.</p>
+    ${gruppen.map(([w, l], gi) => `<details data-gruppe="${h(w)}" ${S.wOffen.has(w) ? 'open' : ''}><summary><b>${h(w)}</b> · ${l.length}× · ${eur(Math.round(l.reduce((s2, x) => s2 + x.betrag, 0) * 100) / 100)}</summary>
+      <label class="k-wa-zeile alle"><input type="checkbox" id="k-wg-${gi}" data-gruppe="${h(w)}" ${l.every((x) => S.wWahl.has(x.nr)) ? 'checked' : ''}><span>alle in „${h(w)}“ anhaken</span></label>
+      ${l.map((x) => `<label class="k-wa-zeile"><input type="checkbox" id="k-wh-${h(x.nr)}" data-nr="${h(x.nr)}" ${S.wWahl.has(x.nr) ? 'checked' : ''}><span>${h(x.nr)} · ${dk(x.datum)} · ${h(x.text)}${x.vonHand ? ' <i class="k-wa-neu">geändert</i>' : ''}</span><b>${eur(x.betrag)}</b></label>`).join('')}</details>`).join('')}
+    <div class="k-wa-leiste"><button class="knopf leise" data-k="w-aendern" id="k-wa-aendern" ${S.wWahl.size ? '' : 'disabled'}>Ausgewählte ändern (${S.wWahl.size})</button>
+      <button class="knopf" data-k="wofuer-alle-los" ${mit.length ? '' : 'disabled'}>Alle ${mit.length} übernehmen</button>
+      <button class="knopf leise" id="schliessen">Abbrechen</button></div></div>`);
+}
+function wofuerAendernDialog() {
+  const liste = S.wPlan.filter((x) => S.wWahl.has(x.nr));
+  if (!liste.length) { wofuerAlleDialog(false); return; }
+  const gleich = liste.every((x) => x.wofuer === liste[0].wofuer) ? liste[0].wofuer : null;
+  dialog(`<div class="k-wa"><h2 id="menu-titel">${liste.length} Buchung${liste.length > 1 ? 'en' : ''} ändern</h2>
+    <div class="k-pr-liste">${liste.map((x) => `<div class="k-pr-b"><span>${h(x.nr)} · ${dk(x.datum)} · ${h(x.text)}<small>jetzt: ${h(x.wofuer || 'kein Vorschlag')}</small></span><b>${eur(x.betrag)}</b></div>`).join('')}</div>
+    <label class="feld"><span>Neues „Wofür“</span><select id="k-wa-neu">${K.WOFUER.map((w) => `<option ${w === gleich ? 'selected' : ''}>${h(w)}</option>`).join('')}<option value="" ${gleich === '' ? 'selected' : ''}>– leer lassen –</option></select></label>
+    <div class="knoepfe"><button class="knopf" data-k="w-setzen">Übernehmen</button><button class="knopf leise" data-k="w-zurueck">Zurück</button></div></div>`);
 }
 function kontoDialog(zeile, fehler) {
   const k = eigeneKonten().find((x) => x.zeile === Number(zeile)) || S.k.konto;
@@ -542,8 +563,16 @@ export async function klick(t) {
     case 'wzeit': S.wZeit = arg; C.zeichne(); return true;
     case 'wofuer-filter': S.fWofuer = arg; S.suche = ''; S.fArt = ''; S.fMonat = S.wZeit === 'monat' ? C.heute().slice(0, 7) : ''; S.tab = 'k-buchungen'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
     case 'wofuer-alle': wofuerAlleDialog(); return true;
+    case 'w-aendern': wofuerAlleDialog(false); wofuerAendernDialog(); return true;
+    case 'w-zurueck': wofuerAlleDialog(false); return true;
+    case 'w-setzen': {
+      const w = document.getElementById('k-wa-neu')?.value ?? '';
+      for (const x of S.wPlan) if (S.wWahl.has(x.nr)) { x.wofuer = w; x.vonHand = true; }
+      S.wWahl = new Set(); S.wOffen.add(w || OHNE);
+      wofuerAlleDialog(false); return true;
+    }
     case 'wofuer-alle-los': {
-      const plan = S.wPlan || [];
+      const plan = (S.wPlan || []).filter((p) => p.wofuer);
       await schreiben(async (api) => {
         const [von, bis] = K.BEREICHE.buchungen;
         const a = (await api.lies('Buchungen', `A${von}:A${bis}`)).values.map((r) => String(r[0] ?? ''));
@@ -762,5 +791,11 @@ export function eingabe(el) {
   if (el.id === 'k-fmonat') { S.fMonat = el.value; C.zeichne(); return true; }
   if (el.id === 'k-fart') { S.fArt = el.value; C.zeichne(); return true; }
   if (el.id === 'k-fwofuer') { S.fWofuer = el.value; C.zeichne(); return true; }
+  if (el.id?.startsWith('k-wh-') || el.id?.startsWith('k-wg-')) {
+    const nrs = el.dataset.nr ? [el.dataset.nr] : S.wPlan.filter((x) => (x.wofuer || OHNE) === el.dataset.gruppe).map((x) => x.nr);
+    for (const nr of nrs) { if (el.checked) S.wWahl.add(nr); else S.wWahl.delete(nr); const cb = document.getElementById('k-wh-' + nr); if (cb) cb.checked = el.checked; }
+    const k = document.getElementById('k-wa-aendern'); if (k) { k.disabled = !S.wWahl.size; k.textContent = `Ausgewählte ändern (${S.wWahl.size})`; }
+    return true;
+  }
   return false;
 }
