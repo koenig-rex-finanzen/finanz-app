@@ -8,7 +8,7 @@ import * as meins from './meins.js';
 import * as hilfe from './hilfe.js';
 import { spritAbschnitt } from './sprit.js';
 
-const VERSION = '0.15.1';
+const VERSION = '0.15.2';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');

@@ -506,11 +506,13 @@ function wofuerAlleDialog(neu = true) {
 function wofuerAendernDialog() {
   const liste = S.wPlan.filter((x) => S.wWahl.has(x.nr));
   if (!liste.length) { wofuerAlleDialog(false); return; }
-  const gleich = liste.every((x) => x.wofuer === liste[0].wofuer) ? liste[0].wofuer : null;
+  const opts = (wert) => `${K.WOFUER.map((w) => `<option ${w === wert ? 'selected' : ''}>${h(w)}</option>`).join('')}<option value="" ${!wert ? 'selected' : ''}>– leer lassen –</option>`;
   dialog(`<div class="k-wa"><h2 id="menu-titel">${liste.length} Buchung${liste.length > 1 ? 'en' : ''} ändern</h2>
-    <div class="k-pr-liste">${liste.map((x) => `<div class="k-pr-b"><span>${h(x.nr)} · ${dk(x.datum)} · ${h(x.text)}<small>jetzt: ${h(x.wofuer || 'kein Vorschlag')}</small></span><b>${eur(x.betrag)}</b></div>`).join('')}</div>
-    <label class="feld"><span>Neues „Wofür“</span><select id="k-wa-neu">${K.WOFUER.map((w) => `<option ${w === gleich ? 'selected' : ''}>${h(w)}</option>`).join('')}<option value="" ${gleich === '' ? 'selected' : ''}>– leer lassen –</option></select></label>
-    <div class="knoepfe"><button class="knopf" data-k="w-setzen">Übernehmen</button><button class="knopf leise" data-k="w-zurueck">Zurück</button></div></div>`);
+    <p class="hint">Für jede Buchung einzeln wählen. Mit „Alle auf …“ kannst du alle auf einmal umstellen und danach einzelne wieder ändern.</p>
+    ${liste.length > 1 ? `<label class="feld"><span>Alle auf …</span><select id="k-wa-alle"><option value="-">– einzeln wählen –</option>${opts('-')}</select></label>` : ''}
+    <div class="k-wa-einzeln">${liste.map((x) => `<div class="k-wa-e"><div class="k-wa-e-kopf"><span>${h(x.nr)} · ${dk(x.datum)} · ${h(x.text)}</span><b>${eur(x.betrag)}</b></div>
+      <select id="k-wa-n-${h(x.nr)}" data-nr="${h(x.nr)}" aria-label="Wofür für ${h(x.nr)}">${opts(x.wofuer)}</select></div>`).join('')}</div>
+    <div class="k-wa-leiste"><button class="knopf" data-k="w-setzen">Übernehmen</button><button class="knopf leise" data-k="w-zurueck">Zurück</button></div></div>`);
 }
 function kontoDialog(zeile, fehler) {
   const k = eigeneKonten().find((x) => x.zeile === Number(zeile)) || S.k.konto;
@@ -566,9 +568,13 @@ export async function klick(t) {
     case 'w-aendern': wofuerAlleDialog(false); wofuerAendernDialog(); return true;
     case 'w-zurueck': wofuerAlleDialog(false); return true;
     case 'w-setzen': {
-      const w = document.getElementById('k-wa-neu')?.value ?? '';
-      for (const x of S.wPlan) if (S.wWahl.has(x.nr)) { x.wofuer = w; x.vonHand = true; }
-      S.wWahl = new Set(); S.wOffen.add(w || OHNE);
+      for (const x of S.wPlan) {
+        const sel = document.getElementById('k-wa-n-' + x.nr);
+        if (!sel) continue;
+        if (sel.value !== x.wofuer) { x.wofuer = sel.value; x.vonHand = true; }
+        S.wOffen.add(x.wofuer || OHNE);
+      }
+      S.wWahl = new Set();
       wofuerAlleDialog(false); return true;
     }
     case 'wofuer-alle-los': {
@@ -791,6 +797,8 @@ export function eingabe(el) {
   if (el.id === 'k-fmonat') { S.fMonat = el.value; C.zeichne(); return true; }
   if (el.id === 'k-fart') { S.fArt = el.value; C.zeichne(); return true; }
   if (el.id === 'k-fwofuer') { S.fWofuer = el.value; C.zeichne(); return true; }
+  if (el.id === 'k-wa-alle') { if (el.value !== '-') document.querySelectorAll('select[id^="k-wa-n-"]').forEach((x) => { x.value = el.value; }); return true; }
+  if (el.id?.startsWith('k-wa-n-')) return true;
   if (el.id?.startsWith('k-wh-') || el.id?.startsWith('k-wg-')) {
     const nrs = el.dataset.nr ? [el.dataset.nr] : S.wPlan.filter((x) => (x.wofuer || OHNE) === el.dataset.gruppe).map((x) => x.nr);
     for (const nr of nrs) { if (el.checked) S.wWahl.add(nr); else S.wWahl.delete(nr); const cb = document.getElementById('k-wh-' + nr); if (cb) cb.checked = el.checked; }
