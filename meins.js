@@ -96,6 +96,40 @@ async function personErmitteln() {
 }
 export function vergessen() { kai.vergessen(); M.akt = null; M.status = 'aus'; M.geladenFuer = null; merk('ug.privat.' + konto(), null); }
 
+// ---------------------------------------------------------------- Topf-Namen in den eigenen Daten
+/** Ein Topf heißt jetzt anders: eigene Auswahl, Ziel und Challenges auf den neuen Namen umstellen. */
+function topfNameUmstellen(dd, alt, neu) {
+  if (Array.isArray(dd.meineToepfe)) dd.meineToepfe = [...new Set(dd.meineToepfe.map((n) => (n === alt ? neu : n)))];
+  if (dd.ziele?.[alt]) { if (!dd.ziele[neu]) dd.ziele[neu] = dd.ziele[alt]; delete dd.ziele[alt]; }
+  for (const c of dd.challenges || []) if (c.topf === alt) c.topf = neu;
+}
+/** Einen Topf, den es nicht mehr gibt, aus den eigenen Daten nehmen (Challenges laufen ohne Topf weiter). */
+function topfNameVergessen(dd, alt) {
+  if (Array.isArray(dd.meineToepfe)) dd.meineToepfe = dd.meineToepfe.filter((n) => n !== alt);
+  if (dd.ziele) delete dd.ziele[alt];
+  for (const c of dd.challenges || []) if (c.topf === alt) c.topf = null;
+}
+/** Topf-Namen, die in den eigenen Daten stehen, aber nicht mehr in der gemeinsamen Datei (z. B. dort umbenannt). */
+function verwaisteToepfe() {
+  const p = d();
+  if (!p || !C.z.modell) return [];
+  const da = new Set(C.z.modell.toepfe.map((t) => t.name));
+  const namen = new Set([...(Array.isArray(p.meineToepfe) ? p.meineToepfe : []), ...Object.keys(p.ziele || {}), ...(p.challenges || []).map((c) => c.topf)]);
+  return [...namen].filter((n) => n && !da.has(n));
+}
+/**
+ * Wird gerufen, wenn ein Topf im Bereich „Gemeinsam“ umbenannt wurde. Ist Natalies Bereich geladen, werden ihre
+ * Daten gleich mitgenommen. Sonst (z. B. Kai hat umbenannt) fragt ihr Bereich beim nächsten Öffnen nach.
+ */
+export async function topfUmbenannt(alt, neu) {
+  if (!d() || M.person === 'Kai' || M.status === 'kai') return false;
+  const p = d();
+  const betroffen = (Array.isArray(p.meineToepfe) && p.meineToepfe.includes(alt)) || !!p.ziele?.[alt] || (p.challenges || []).some((c) => c.topf === alt);
+  if (!betroffen) return false;
+  await aendern((dd) => topfNameUmstellen(dd, alt, neu));
+  return true;
+}
+
 /**
  * Ändert die private Datei: lädt den neuesten Stand, wendet `fn` an, speichert mit If-Match.
  * Bei gleichzeitiger Änderung auf einem anderen Gerät einmal neu versuchen.
@@ -364,7 +398,12 @@ function toepfeAnsicht(mp) {
       <div class="m-topf-knoepfe"><button class="knopf leise klein" data-m="topf-bearbeiten" data-arg="${h(t.name)}">Bearbeiten</button><button class="knopf leise klein" data-topf="${h(t.name)}">Buchungen</button></div></div>`;
   };
   const meineListe = alle.filter((t) => meine.includes(t.name));
-  return `<section><h2>Deine Töpfe</h2>
+  const weg = verwaisteToepfe();
+  const wegHtml = weg.length ? `<div class="hinweis warn">${weg.map((n, i) => `<div style="margin-bottom:${i < weg.length - 1 ? '12px' : '0'}">
+      <b>„${h(n)}“</b> steht nicht mehr in der gemeinsamen Datei. Wurde der Topf umbenannt? Dann wähle den neuen Namen, damit dein Ziel und deine Challenges mitgehen.
+      <label class="feld" style="margin-top:8px"><span>Heißt jetzt</span><select id="m-vw-${i}">${opt(C.z.modell.toepfe.map((t) => t.name), '', 'bitte wählen')}</select></label>
+      <div class="m-topf-knoepfe"><button class="knopf klein" data-m="topf-zuordnen" data-arg="${h(n)}" data-i="${i}">Übernehmen</button><button class="knopf leise klein" data-m="topf-vergessen" data-arg="${h(n)}">Gibt es nicht mehr</button></div></div>`).join('')}</div>` : '';
+  return `${wegHtml}<section><h2>Deine Töpfe</h2>
     <div class="topfsumme">${spar.map((k) => `<div class="z"><span>${h(k.name)}</span><b>${eur(v.vergangen ? k.standMonatsende : k.standJetzt)}</b></div>`).join('')}
       <div class="z"><span>Davon in deinen Töpfen</span><b>${eur(Math.round(meineListe.reduce((s, t) => s + t.stand, 0) * 100) / 100)}</b></div>
       <div class="z"><span>Deine Sparraten im Monat</span><b>${eur(Math.round(meineListe.reduce((s, t) => s + t.sparrate, 0) * 100) / 100)}</b></div></div>
@@ -691,6 +730,15 @@ export async function klick(t) {
     case 'topf-bearbeiten': topfDialog(arg); return true;
     case 'topf-neu': topfNeuDialog(); return true;
     case 'meine-toepfe': meineToepfeDialog(); return true;
+    case 'topf-zuordnen': {
+      const neu = document.getElementById('m-vw-' + t.dataset.i)?.value;
+      if (!neu) { M.meldung = { art: 'warn', text: `Bitte zuerst wählen, wie „${arg}“ jetzt heißt.` }; C.zeichne(); return true; }
+      await speichern((dd) => topfNameUmstellen(dd, arg, neu), { art: 'info', text: `„${arg}“ heißt jetzt „${neu}“. Dein Ziel und deine Challenges sind mitgegangen.` }, { knopf: t });
+      return true;
+    }
+    case 'topf-vergessen':
+      await speichern((dd) => topfNameVergessen(dd, arg), { art: 'info', text: `„${arg}“ ist aus deinem Bereich entfernt. Challenges dazu laufen ohne Topf weiter.` }, { knopf: t });
+      return true;
     case 'challenge-neu': challengeNeuDialog(); return true;
     case 'ch-typ': challengeNeuDialog(arg); return true;
     case 'ch-bearbeiten': { const c = d().challenges.find((x) => x.id === arg); challengeNeuDialog(c.typ, null, c); return true; }

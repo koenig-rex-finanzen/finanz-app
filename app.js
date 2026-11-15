@@ -8,7 +8,7 @@ import * as meins from './meins.js';
 import * as hilfe from './hilfe.js';
 import { spritAbschnitt } from './sprit.js';
 
-const VERSION = '0.16.0';
+const VERSION = '0.17.0';
 const app = document.getElementById('app');
 const dateiInput = document.getElementById('datei');
 const menu = document.getElementById('menu');
@@ -413,7 +413,8 @@ function toepfe(v) {
     ${[...gruppen].map(([bereich, liste]) => `<div class="gruppe">${h(bereich || 'Ohne Bereich')}</div><div class="toepfe">${liste.map((t) =>
       `<button class="topf ${t.stand < 0 ? 'minus' : ''}" data-topf="${h(t.name)}" aria-label="${h(t.name)}: alle Buchungen ansehen"><span class="n">${h(t.name)}</span><span class="b">${eur(t.stand)}</span><span class="pf">${ICON.rechts}</span>
         <span class="s">${t.sparrate ? `${eur(t.sparrate)} im Monat` : 'keine feste Sparrate'}${t.bemerkung ? '. ' + h(t.bemerkung) : ''}</span></button>`).join('')}</div>`).join('')}
-    <p class="hint" style="margin-top:12px">Topf antippen zeigt alle Buchungen dieses Topfs.</p>
+    <p class="hint" style="margin-top:12px">Topf antippen zeigt alle Buchungen dieses Topfs${kannEintragen() ? '. Dort kannst du ihn auch ändern' : ''}.</p>
+    ${kannEintragen() ? '<div class="knoepfe-liste"><button class="knopf leise" id="topf-neu-knopf">Neuen Topf anlegen</button></div>' : ''}
   </section>`;
 }
 
@@ -507,6 +508,7 @@ function zeichneTopf() {
       <div class="gross ${vl.stand < 0 ? 'neg' : ''}">${eur(vl.stand)}</div>
       <div class="hint">${t.sparrate ? `Sparrate ${eur(t.sparrate)} im Monat` : 'keine feste Sparrate'}${t.bedarf ? ` · Bedarf ${eur(t.bedarf)} im Monat` : ''}</div>
       ${t.bemerkung ? `<p class="hint" style="margin-top:6px">${h(t.bemerkung)}</p>` : ''}
+      ${kannEintragen() ? `<button class="knopf leise klein" id="topf-aendern-knopf" style="margin-top:10px">Topf ändern</button>` : ''}
     </div>
     <section>
       <div class="filter umbruch" role="group" aria-label="Zeitraum">${ZEITRAEUME.map(([id, name]) => `<button aria-pressed="${z.zeitraum === id}" data-zeitraum="${id}">${name}</button>`).join('')}</div>
@@ -856,6 +858,90 @@ async function ausgleichSetzen(nr, grund, knopf) {
   }
 }
 
+// ---------- Topf ändern / neuen Topf anlegen (schreibt in die gemeinsame Datei, Blatt „Töpfe“)
+const sparkonten = () => z.modell.konten.filter((k) => k.rolle === 'Sparen' && k.status !== 'geschlossen').map((k) => k.name);
+const zahlText = (n) => (Number(n) || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false });
+const auswahl = (liste, wert, leer) => (leer != null ? `<option value="">${h(leer)}</option>` : '') + liste.map((x) => `<option value="${h(x)}" ${x === wert ? 'selected' : ''}>${h(x)}</option>`).join('');
+const topfFeld = (name, titel, wert, extra = '') => `<label class="feld"><span>${titel}</span><input name="${name}" value="${h(wert ?? '')}" autocomplete="off" ${extra}></label>`;
+
+function zeigeTopfAendern(name, fehler, vorher) {
+  const t = z.modell.toepfe.find((x) => x.name === name);
+  if (!t) return;
+  const v = vorher || { name: t.name, sparrate: zahlText(t.sparrate), bemerkung: t.bemerkung || '' };
+  menu.innerHTML = `<form id="topf-form" novalidate><h2 id="menu-titel">Topf „${h(name)}“ ändern</h2>
+    <input type="hidden" name="alt" value="${h(name)}">
+    ${topfFeld('name', 'Name', v.name)}${topfFeld('sparrate', 'Sparrate im Monat €', v.sparrate, 'inputmode="decimal"')}${topfFeld('bemerkung', 'Bemerkung', v.bemerkung)}
+    <p class="hint warnfarbe">Das ändert den Topf in der gemeinsamen Datei, für euch beide. Beim Umbenennen stellt die App alle Buchungen und Kosten mit diesem Topf auf den neuen Namen um. Eine andere Sparrate ändert auch, was jeden Monat aufs Tagesgeld überwiesen wird.</p>
+    ${fehler ? `<p class="fehler">${h(fehler)}</p>` : ''}
+    <div class="knoepfe"><button class="knopf" type="submit" id="topf-los">Speichern</button><button class="knopf leise" type="button" id="schliessen">Abbrechen</button></div></form>`;
+  if (!menu.open) menu.showModal();
+}
+
+function zeigeTopfNeu(fehler, vorher) {
+  const konten = sparkonten();
+  const v = vorher || { name: '', sparrate: '', bereich: '', bemerkung: '', konto: konten[0] || '' };
+  menu.innerHTML = `<form id="topf-neu-form" novalidate><h2 id="menu-titel">Neuer Topf</h2>
+    ${topfFeld('name', 'Name', v.name, 'placeholder="z. B. Urlaub"')}${topfFeld('sparrate', 'Sparrate im Monat €', v.sparrate, 'inputmode="decimal" placeholder="0,00"')}
+    <label class="feld"><span>Bereich</span><select name="bereich">${auswahl(z.modell.listen?.bereiche || [], v.bereich, 'ohne Bereich')}</select></label>
+    ${konten.length > 1 ? `<label class="feld"><span>Liegt auf</span><select name="konto">${auswahl(konten, v.konto)}</select></label>` : `<input type="hidden" name="konto" value="${h(konten[0] || '')}">`}
+    ${topfFeld('bemerkung', 'Bemerkung (optional)', v.bemerkung)}
+    <p class="hint warnfarbe">Der Topf wird in der gemeinsamen Datei angelegt (Blatt „Töpfe“${konten.length === 1 ? `, auf ${h(konten[0])}` : ''}) und startet mit 0,00 €. Ihr seht ihn beide. Eine Sparrate erhöht die monatliche Überweisung aufs Tagesgeld.</p>
+    ${fehler ? `<p class="fehler">${h(fehler)}</p>` : ''}
+    <div class="knoepfe"><button class="knopf" type="submit" id="topf-los">Topf anlegen</button><button class="knopf leise" type="button" id="schliessen">Abbrechen</button></div></form>`;
+  if (!menu.open) menu.showModal();
+}
+
+document.addEventListener('submit', async (ev) => {
+  const id = ev.target.id;
+  if (id !== 'topf-form' && id !== 'topf-neu-form') return;
+  ev.preventDefault();
+  if (z.schreibt) return;
+  const neu = id === 'topf-neu-form';
+  const d = Object.fromEntries(new FormData(ev.target));
+  const zurueck = (f) => (neu ? zeigeTopfNeu(f, d) : zeigeTopfAendern(d.alt, f, d));
+  const name = (d.name || '').trim();
+  const bemerkung = (d.bemerkung || '').trim();
+  const sparrate = String(d.sparrate || '').trim() === '' ? 0 : betragLesen(d.sparrate);
+  if (!name || !(sparrate >= 0)) { zurueck('Bitte einen Namen und eine Sparrate (0 oder mehr) angeben.'); return; }
+  if (z.modell.toepfe.some((x) => x.name === name && x.name !== d.alt)) { zurueck(`Einen Topf „${name}“ gibt es schon.`); return; }
+  const t = neu ? null : z.modell.toepfe.find((x) => x.name === d.alt);
+  if (!neu && !t) { zurueck(`Den Topf „${d.alt}“ gibt es nicht mehr. Bitte im Menü neu laden.`); return; }
+  if (!neu && name === t.name && Math.abs(sparrate - t.sparrate) < 0.005 && bemerkung === (t.bemerkung || '')) { menu.close(); return; }
+  if (neu && !d.konto) { zurueck('In der Datei gibt es kein Sparkonto, auf dem der Topf liegen kann.'); return; }
+  const knopf = document.getElementById('topf-los');
+  knopf.disabled = true; knopf.textContent = neu ? 'Wird angelegt …' : 'Wird gespeichert …';
+  const vorher = z.datei?.eTag;
+  let text;
+  z.schreibt = true;
+  try {
+    if (neu) {
+      await od.topfNeu(od.aktuellerOrt(), { name, konto: d.konto, bereich: d.bereich || '', sparrate, bemerkung, stichtag: heute() });
+      text = `Topf „${name}“ angelegt.`;
+    } else {
+      const { umgestellt } = await od.topfAendern(od.aktuellerOrt(), t.name, { name, sparrate, bemerkung });
+      text = `Topf „${name}“ gespeichert${umgestellt ? ` (${umgestellt} Buchungen/Kosten auf den neuen Namen umgestellt)` : ''}.`;
+    }
+  } catch (e) { z.schreibt = false; zurueck(schreibFehler(e)); return; }
+  z.schreibt = false;
+  menu.close();
+  if (!neu) {
+    // Anzeige sofort anpassen, bis OneDrive die neue Version liefert.
+    const alt = t.name;
+    Object.assign(t, { name, sparrate, bemerkung });
+    if (name !== alt) {
+      for (const b of z.modell.buchungen) if (b.topf === alt) b.topf = name;
+      for (const k of z.modell.kosten) if (k.topf === alt) k.topf = name;
+      if (z.topf === alt) { z.topf = name; try { history.replaceState({ topf: name }, ''); } catch {} }
+      // Natalies eigene Ziele, Auswahl und Challenges mitnehmen (nur wenn ihr Bereich geladen ist; sonst fragt ihr Bereich später nach).
+      await meins.topfUmbenannt(alt, name).catch(() => null);
+    }
+  }
+  z.status = { art: 'info', text }; zeichne();
+  await od.aufNeueVersionWarten(od.aktuellerOrt(), vorher).catch(() => null);
+  await ausOneDrive({ immer: true });
+  z.status = { art: 'info', text }; zeichne();
+});
+
 // ---------- Ereignisse
 document.addEventListener('click', async (ev) => {
   if (document.body.classList.contains('pc-modus')) return;
@@ -868,6 +954,8 @@ document.addEventListener('click', async (ev) => {
   if (t.dataset.filter) { z.filter = t.dataset.filter; zeichne(); return; }
   if (t.dataset.topf) { oeffneTopf(t.dataset.topf); return; }
   if (t.id === 'topf-zurueck') { if (history.state?.topf) history.back(); else schliesseTopf(); return; }
+  if (t.id === 'topf-aendern-knopf' && z.topf) { zeigeTopfAendern(z.topf); return; }
+  if (t.id === 'topf-neu-knopf') { zeigeTopfNeu(); return; }
   if (t.dataset.zeitraum) {
     if (t.dataset.zeitraum === 'eigen' && z.zeitraum !== 'eigen') { z.eigenVon = null; z.eigenBis = null; }
     z.zeitraum = t.dataset.zeitraum; zeichne(); return;
