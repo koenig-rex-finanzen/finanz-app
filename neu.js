@@ -9,7 +9,7 @@ import { FUNKTIONEN, WIDGETS_START, VORHER_AKTIV, LISTEN, SPARPLAN, BLAETTER, sp
 import { CONFIG } from './config.js';
 import * as hilfe from './hilfe.js';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 const $ = (s, r = document) => r.querySelector(s);
 /** Gemeinsames Dialogfenster, immer ohne alten Schließen-Handler. */
 const dialog = () => { const d = document.querySelector('#menu'); d.onclose = null; d.returnValue = ''; return d; };
@@ -39,17 +39,6 @@ const art = () => (z.bereich === 'gemeinsam' ? 'gemeinsam' : privat());
 
 // ---------------------------------------------------------------- Start
 
-/** Gibt es die neuen Dateien schon? (dann startet diese Oberfläche statt der alten) */
-export async function aktiv() {
-  if (new URLSearchParams(location.search).has('neu') || location.hash === '#umzug') return true;
-  try { if (localStorage.getItem('ug.neu.aktiv') === '1') return true; } catch {}
-  if (new URLSearchParams(location.search).has('code')) { try { await ms.rueckkehrVerarbeiten(); } catch {} }
-  if (!ms.angemeldet()) return false;
-  const f = await D.finden('gemeinsam').catch(() => null);
-  if (f) { try { localStorage.setItem('ug.neu.aktiv', '1'); } catch {} return true; }
-  return false;
-}
-
 export async function start() {
   document.body.classList.add('einheit');
   themaSetzen();
@@ -62,11 +51,9 @@ export async function start() {
   if (q.get('neu') === 'beispiel') return beispielStart();
   try { await ms.rueckkehrVerarbeiten(); } catch (e) { z.fehler = e.message; }
   if (!ms.angemeldet()) return anmeldeSeite();
-  if (location.hash === '#umzug') return (await import('./umzug.js')).seite();
   if (location.hash === '#kai') z.bereich = 'privat';
   zeichnen();
   await allesLaden();
-  window.addEventListener('hashchange', () => { if (location.hash === '#umzug') location.reload(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !z.speichert) allesLaden(true); });
 }
 
