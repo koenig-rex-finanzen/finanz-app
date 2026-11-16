@@ -235,6 +235,7 @@ export async function mitSitzung(ort, arbeit) {
     lies: (blatt, adresse) => graph(W + `/worksheets('${blatt}')/range(address='${adresse}')?$select=values`, { headers: S }),
     schreib: (blatt, adresse, values) => graph(W + `/worksheets('${blatt}')/range(address='${adresse}')`, json({ method: 'PATCH', headers: S, body: JSON.stringify({ values }) })),
     tabelle: (name) => graph(W + `/tables('${name}')/range?$select=address`, { headers: S }),
+    rechnen: () => graph(W + '/application/calculate', json({ method: 'POST', headers: S, body: '{"calculationType":"Full"}' })),
   };
   try { return await arbeit(api); } finally { await graph(W + '/closeSession', { method: 'POST', headers: S }).catch(() => {}); }
 }
@@ -551,4 +552,12 @@ export async function dateiErsetzen(ort, bytes) {
   const r = await rohAnfrage(`/drives/${ort.driveId}/items/${ort.itemId}/content`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes });
   if (r.status === 401) throw new AnmeldungNoetig();
   if (!r.ok) throw new Error(`Ersetzen fehlgeschlagen (${r.status})`);
+}
+/** Öffnet die Datei in einer Excel-Sitzung, rechnet alles neu und speichert (Formel-Ergebnisse stehen danach in der Datei). */
+export async function berechnen(ort) {
+  for (let i = 0; i < 6; i++) {
+    try {
+      return await mitSitzung(ort, (api) => api.rechnen());
+    } catch (e) { if (i === 5) throw e; await new Promise((r) => setTimeout(r, 4000)); }
+  }
 }

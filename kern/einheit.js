@@ -2,7 +2,7 @@
 // Liest jede Datei gleich und rechnet genau wie die Formeln aus kern/vorlage.js.
 
 import { leseArbeitsmappe } from './xlsx.js';
-import { BLAETTER, KOPFZEILE, spalten, RHYTHMUS_ABSTAND, NUR_TOPF, TOPF_PLUS, TOPF_MINUS, SPARPLAN } from './format.js';
+import { BLAETTER, KOPFZEILE, spalten, RHYTHMUS_ABSTAND, NUR_TOPF, TOPF_PLUS, TOPF_MINUS, SPARPLAN, KARTEN_ARTEN } from './format.js';
 
 export const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 const summe = (arr, f = (x) => x) => r2(arr.reduce((s, x) => s + (f(x) || 0), 0));
@@ -107,11 +107,23 @@ export function plan(p, monat) {
   if (!p.faellig) return 0;
   return (((+monat.slice(5, 7) - p.faellig) % n) + n) % n === 0 ? p.betrag || 0 : 0;
 }
-const gebucht = (m, posten, monat, art) => summe(m.buchungen.filter((b) => b.posten === posten && b.giltFuer === monat && b.art === art), (b) => b.betrag);
-/** Offener Rest eines Postens im Monat (0, wenn das Konto nicht für Frei zählt). */
-export function offen(m, p, monat, art) {
+/** Gebucht auf einen Posten: Buchungen mit diesem Posten, bei Ausgaben auch mit gleichnamiger Kategorie (z. B. „Sprit“). */
+const gebucht = (m, posten, monat, art) => summe(m.buchungen.filter((b) => b.giltFuer === monat && b.art === art
+  && (b.posten === posten || (art === 'Ausgabe' && b.kategorie === posten && b.posten !== posten))), (b) => b.betrag);
+const istKarte = (m, konto) => m.konten.some((k) => k.name === konto && KARTEN_ARTEN.includes(k.art));
+/**
+ * Offener Rest eines Postens im Monat (0, wenn das Konto nicht für Frei zählt).
+ * karte = true: Kosten einer Karte (Kreditkarte/Haushalt) zählen als ein Topf: Plan × (1 − mit der Karte ausgegeben / Plan der Karte).
+ */
+export function offen(m, p, monat, art, karte = true) {
   if (!zaehltFrei(m, p.konto)) return 0;
-  return r2(Math.max(0, plan(p, monat) - gebucht(m, p.posten, monat, art)));
+  const pl = plan(p, monat);
+  if (karte && art === 'Ausgabe' && p.konto && istKarte(m, p.konto)) {
+    const planKarte = summe(m.kosten.filter((q) => q.konto === p.konto), (q) => plan(q, monat));
+    const ausgegeben = summe(m.buchungen.filter((b) => b.von === p.konto && b.giltFuer === monat && b.art === 'Ausgabe'), (b) => b.betrag);
+    return planKarte > 0 ? r2(pl * Math.max(0, 1 - ausgegeben / planKarte)) : 0;
+  }
+  return r2(Math.max(0, pl - gebucht(m, p.posten, monat, art)));
 }
 /** Soll-Überweisungen eines Monats: Wirkung aufs Freie (+ kommt rein, − geht raus). */
 export function sollOffen(m, monat) {
@@ -149,7 +161,7 @@ export function vorschau(m, heute, akt = heute.slice(0, 7)) {
   return Array.from({ length: 12 }, (_, i) => {
     const mon = monatPlus(akt, i);
     const einnahmen = summe(m.einnahmen, (p) => offen(m, p, mon, 'Einnahme'));
-    const kosten = summe(m.kosten, (p) => offen(m, p, mon, 'Ausgabe'));
+    const kosten = summe(m.kosten, (p) => offen(m, p, mon, 'Ausgabe', i === 0));
     const sparraten = i === 0 ? 0 : summe(m.toepfe.filter((t) => t.automatisch === 'Ja' && t.frei !== 'Ja' && (!t.ab || t.ab <= mon) && (!t.bis || t.bis >= mon)), (t) => t.sparrate);
     const soll = sollOffen(m, mon);
     const ergebnis = r2(einnahmen - kosten - sparraten + soll);

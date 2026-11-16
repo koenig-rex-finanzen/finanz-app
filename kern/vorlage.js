@@ -16,6 +16,8 @@ const ABSTAND = (zelle) => `IF(${zelle}="",1,IFERROR(CHOOSE(MATCH(${zelle},{"mon
 const ZAEHLT = (zelle) => `OR(${zelle}="",COUNTIFS(${R('Konten', 'name')},${zelle},${R('Konten', 'eigen')},"Ja",${R('Konten', 'frei')},"Ja")>0)`;
 
 const BU = (k) => R('Buchungen', k);
+// Konto ist eine Karte (Kreditkarte/Haushalt): Kosten zählen als ein Topf
+const KARTE = (zelle) => `(COUNTIFS(${R('Konten', 'name')},${zelle},${R('Konten', 'art')},"Kreditkarte")+COUNTIFS(${R('Konten', 'name')},${zelle},${R('Konten', 'art')},"Haushalt"))>0`;
 
 // ---------------------------------------------------------------- Formeln je Zeile
 const FORMELN = {
@@ -48,8 +50,11 @@ const FORMELN = {
   Kosten: {
     monatswert: (r, c) => `IF(${c.posten}${r}="",0,IF(${c.status}${r}="beendet",0,${c.betrag}${r}/${ABSTAND(c.rhythmus + r)}))`,
     planAkt: (r, c) => planFormel(r, c, 'AktMonat'),
-    istAkt: (r, c) => `IF(${c.posten}${r}="","",SUMIFS(${BU('betrag')},${BU('posten')},${c.posten}${r},${BU('giltFuer')},AktMonat,${BU('art')},"Ausgabe"))`,
-    offenAkt: (r, c) => `IF(${c.posten}${r}="","",IF(${ZAEHLT(c.konto + r)},MAX(0,${c.planAkt}${r}-${c.istAkt}${r}),0))`,
+    istAkt: (r, c) => `IF(${c.posten}${r}="","",SUMIFS(${BU('betrag')},${BU('posten')},${c.posten}${r},${BU('giltFuer')},AktMonat,${BU('art')},"Ausgabe")`
+      + `+SUMIFS(${BU('betrag')},${BU('kategorie')},${c.posten}${r},${BU('posten')},"<>"&${c.posten}${r},${BU('giltFuer')},AktMonat,${BU('art')},"Ausgabe"))`,
+    offenAkt: (r, c) => `IF(${c.posten}${r}="","",IF(${ZAEHLT(c.konto + r)},IF(${KARTE(c.konto + r)},`
+      + `${c.planAkt}${r}*MAX(0,1-SUMIFS(${BU('betrag')},${BU('von')},${c.konto}${r},${BU('giltFuer')},AktMonat,${BU('art')},"Ausgabe")/MAX(0.0001,SUMIFS(${R('Kosten', 'planAkt')},${R('Kosten', 'konto')},${c.konto}${r}))),`
+      + `MAX(0,${c.planAkt}${r}-${c.istAkt}${r})),0))`,
   },
   Einnahmen: {
     planAkt: (r, c) => planFormel(r, c, 'AktMonat'),
@@ -106,6 +111,7 @@ function tabellenBlatt(name, zeilen = []) {
         if (i >= Math.max(zeilen.length + 40, Math.min(def.zeilen, 60))) continue;
         b.set(s.buchst + r, { f: formeln[s.key](r, c), s: FORMEL_STIL[name] || STIL.formelText });
       } else if (d) {
+        if (d[s.key] && typeof d[s.key] === 'object' && d[s.key].f) { b.set(s.buchst + r, { f: d[s.key].f, v: d[s.key].v, s: STIL_TYP[s.typ] || 0 }); continue; }
         const v = wert(s.typ, d[s.key]);
         if (v != null) b.set(s.buchst + r, { v, s: STIL_TYP[s.typ] || 0 });
       }
@@ -192,10 +198,12 @@ function vorschau(freiHeuteRef) {
       b.set('A' + r, { v: k, s: STIL.hinweis });
       b.set('B' + r, { f: `IF(${pre}${c.posten}$${k}="","",${pre}${c.posten}$${k})`, s: STIL.formelText, t: 'str' });
       b.set('P' + r, { f: `IF(${ZAEHLT(`${pre}${c.konto}$${k}`)},1,0)`, s: STIL.formelText });
-      M.forEach((mc) => {
+      M.forEach((mc, mi) => {
+        if (mi === 0 && blatt === 'Kosten') { b.set(mc + r, { f: `IF(OR(${pre}${c.posten}$${k}="",$P${r}=0),0,N(${pre}${c.offenAkt}$${k}))`, s: STIL.formelEuro }); return; }
         const plan = planFormel(k, cc, `${mc}$4`, pre);
-        const ist = `SUMIFS(${BU('betrag')},${BU('posten')},${pre}${c.posten}$${k},${BU('giltFuer')},${mc}$4,${BU('art')},"${art}")`;
-        b.set(mc + r, { f: `IF(OR(${pre}${c.posten}$${k}="",$P${r}=0),0,MAX(0,${plan}-${ist}))`, s: STIL.formelEuro });
+        let ist = `SUMIFS(${BU('betrag')},${BU('posten')},${pre}${c.posten}$${k},${BU('giltFuer')},${mc}$4,${BU('art')},"${art}")`;
+        if (art === 'Ausgabe') ist += `+SUMIFS(${BU('betrag')},${BU('kategorie')},${pre}${c.posten}$${k},${BU('posten')},"<>"&${pre}${c.posten}$${k},${BU('giltFuer')},${mc}$4,${BU('art')},"Ausgabe")`;
+        b.set(mc + r, { f: `IF(OR(${pre}${c.posten}$${k}="",$P${r}=0),0,MAX(0,${plan}-(${ist})))`, s: STIL.formelEuro });
       });
     }
     sum[art] = [von, r - 1];

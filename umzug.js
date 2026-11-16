@@ -56,7 +56,7 @@ export async function bauen(param) {
   const kat = (extra) => [...g.gemeinsam.kategorien, ...extra.filter((x) => !g.gemeinsam.kategorien.some((k) => k.name === x)).map((name) => ({ name, aktiv: 'Ja', angelegt: 'Umzug' }))];
   const alleNeu = [...(ka.neueKategorien || []), ...(n?.neueKategorien || [])];
   const dateien = {
-    gemeinsam: V.dateiBauen({ ...g.gemeinsam, kategorien: kat(alleNeu), zusatz: zg.zusatz, fremdeStile: zg.fremdeStile, namen: zg.namen, metadata: zg.metadata }),
+    gemeinsam: V.dateiBauen({ ...g.gemeinsam, soll: zg.soll, kategorien: kat(alleNeu), zusatz: zg.zusatz, fremdeStile: zg.fremdeStile, namen: zg.namen, metadata: zg.metadata }),
     tagesgeld: V.dateiBauen({ ...g.tagesgeld, kategorien: kat(alleNeu) }),
     kai: V.dateiBauen({ ...ka.daten, kategorien: kat(alleNeu), zusatz: [...Object.entries(ka.zusatz).map(([x, zz]) => V.zusatzTabelle(x, zz)), ...zk.zusatz], fremdeStile: zk.fremdeStile, metadata: zk.metadata }),
     ...(n ? { natalie: V.dateiBauen({ ...n.daten, kategorien: kat(alleNeu), zusatz: Object.entries(n.zusatz).map(([x, zz]) => V.zusatzTabelle(x, zz)) }) } : {}),
@@ -112,5 +112,11 @@ async function hochladen(r, echt) {
     if (!echt) { const alt = await od.graphRoh(`/drives/${ordner[b].driveId}/items/${ordner[b].itemId}:/${encodeURIComponent(name)}?$select=id`); if (alt?.id) await od.dateiErsetzen({ driveId: ordner[b].driveId, itemId: alt.id }, bytes); else await od.dateiNeu(ordner[b], name, bytes); }
     else await od.dateiNeu(ordner[b], name, bytes);
     schreib(`${name} angelegt.`);
+  }
+  // Einmal in Excel rechnen lassen, damit alle Formel-Ergebnisse in den Dateien stehen
+  for (const b of Object.keys(r.dateien)) {
+    const name = (echt ? '' : 'TEST_') + BEREICH_DATEI[b].datei;
+    const it = ordner[b] && await od.graphRoh(`/drives/${ordner[b].driveId}/items/${ordner[b].itemId}:/${encodeURIComponent(name)}?$select=id`);
+    if (it?.id) { await od.berechnen({ driveId: ordner[b].driveId, itemId: it.id }); schreib(`${name} in Excel gerechnet.`); }
   }
 }

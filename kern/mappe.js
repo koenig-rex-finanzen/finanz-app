@@ -104,7 +104,7 @@ const SP = (i) => { let s = ''; i += 1; while (i > 0) { const r = (i - 1) % 26; 
 const zelleXml = (ref, z, sst) => {
   if (z == null) return '';
   const s = z.s ? ` s="${z.s}"` : '';
-  if (z.f != null) return `<c r="${ref}"${s}${z.t === 'str' ? ' t="str"' : ''}><f>${esc(z.f.replace(/^=/, ''))}</f></c>`;
+  if (z.f != null) return `<c r="${ref}"${s}${z.t === 'str' ? ' t="str"' : ''}><f>${esc(z.f.replace(/^=/, ''))}</f>${typeof z.v === 'number' && Number.isFinite(z.v) ? `<v>${z.v}</v>` : ''}</c>`;
   const v = z.v;
   if (v == null || v === '') return z.s ? `<c r="${ref}"${s}/>` : '';
   if (typeof v === 'number') return Number.isFinite(v) ? `<c r="${ref}"${s}><v>${v}</v></c>` : '';

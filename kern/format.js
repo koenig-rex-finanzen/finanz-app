@@ -161,7 +161,7 @@ export const LISTEN = {
   Quellen: ['manuell', 'CSV', 'Aufteilung', 'Umzug'],
   'Gezahlt von': ['Kai', 'Natalie', 'Ausgleich: aus Topf', 'Ausgleich: falsch bezahlt'],
   Rollen: ['gemeinsam', 'privat', 'Sparen', 'extern'],
-  Kontoarten: ['Giro', 'Kreditkarte', 'Pocket', 'Tagesgeld', 'PayPal', 'Depot', 'Extern'],
+  Kontoarten: ['Giro', 'Haushalt', 'Kreditkarte', 'Pocket', 'Tagesgeld', 'PayPal', 'Depot', 'Extern'],
   Kontostatus: ['aktiv', 'geschlossen'],
   Poststatus: ['aktiv', 'geschätzt', 'beendet'],
 };
@@ -172,7 +172,9 @@ export const RHYTHMUS_ABSTAND = { monatlich: 1, vierteljährlich: 3, halbjährli
 export const TOPF_PLUS = ['Einnahme', 'In Topf legen'];
 export const TOPF_MINUS = ['Ausgabe', 'Aus Topf nehmen'];
 export const NUR_TOPF = ['In Topf legen', 'Aus Topf nehmen']; // bewegen kein Geld zwischen Konten
-export const SPARPLAN = 'Sparplan (verteilt)'; // Topf-Wert: wird nach Sparrate auf alle Töpfe verteilt
+export const SPARPLAN = 'Sparplan (verteilt)';
+// Konten, deren Kosten wie ein gemeinsamer Topf zählen (Haushaltsgeld über die Karte): offen = Plan der Karte − mit der Karte ausgegeben
+export const KARTEN_ARTEN = ['Kreditkarte', 'Haushalt']; // Topf-Wert: wird nach Sparrate auf alle Töpfe verteilt
 
 // Gemeinsame Kategorien-Liste (Kais bisherige Liste + Drogerie; Versicherungen, Kredite aus Gemeinsam, Entscheidung 16.11.2026)
 export const KATEGORIEN_START = ['Freizeit', 'Essen & Trinken', 'Lieferdienst', 'Shopping', 'Amazon', 'Haushalt', 'Drogerie',

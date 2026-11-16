@@ -9,6 +9,7 @@ import { SPRIT_MUSTER, toepfeStand as altToepfe, kontostand as altKontostand, mo
 import * as P from './privat.js';
 import * as K from './kai.js';
 import { entpacken, blaetterVorbereiten, spaltenUmschreiben, chooseColsUmschreiben } from './blattkopie.js';
+import { leseArbeitsmappe } from './xlsx.js';
 import { ERSTE_ZEILE, BLAETTER, spalten } from './format.js';
 
 const MONATSNAMEN = ['januar', 'februar', 'märz', 'april', 'mai', 'juni', 'juli', 'august', 'september', 'oktober', 'november', 'dezember'];
@@ -26,6 +27,16 @@ export function faelligAus(text) {
   return {};
 }
 const kategorieAus = (bereich) => BEREICH_ZU_KATEGORIE[bereich] ?? null;
+const normPosten = (s) => (s || '').toLowerCase().replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+/** Buchungs-Posten an die genauen Posten-Namen angleichen (wie die alte App: Klammern/Groß-Klein egal). */
+function postenAngleichen(buchungen, posten, hinweise) {
+  const exakt = new Set(posten);
+  for (const b of buchungen) {
+    if (!b.posten || exakt.has(b.posten)) continue;
+    const t = posten.filter((p) => normPosten(p) === normPosten(b.posten));
+    if (t.length === 1) { hinweise.push(`${b.nr}: Posten „${b.posten}“ → „${t[0]}“`); b.posten = t[0]; }
+  }
+}
 const istSprit = (b) => SPRIT_MUSTER.test(`${b.posten || ''} ${b.beschreibung || ''}`);
 const einstellungen = (bereich, extra = []) => [
   { schluessel: 'Format-Version', wert: String(FORMAT_VERSION), erklaerung: 'Version des Dateiformats' },
@@ -79,6 +90,8 @@ export function gemeinsamUndTagesgeld(alt, opt = {}) {
       gm.push(x);
     }
   }
+  const postenNamen = [...alt.kosten, ...alt.einnahmen].map((p) => p.posten).filter(Boolean);
+  postenAngleichen(gm, postenNamen, hinweise); postenAngleichen(tg, postenNamen, hinweise);
   const kontenFuer = (eigene, freiAuch) => alt.konten.map((k) => neuesKonto(k, eigene.has(k.name), eigene.has(k.name) && freiAuch(k)));
   const vw = opt.vwSchluss || '2027-01-01';
   const gKonten = kontenFuer(gem, () => true).map((k) => (gem.has(k.name) ? { ...k, geschlossenAb: vw, bemerkung: [k.bemerkung, 'ab 01.01.2027 nicht mehr genutzt'].filter(Boolean).join(' · ') } : k));
@@ -304,7 +317,27 @@ export async function zusatzGemeinsam(altBytes, daten) {
     { name: 'kVisa', ref: `INDEX('Konten'!$B$5:$B$${kb},MATCH("KT02",'Konten'!$A$5:$A$${kb},0))` },
     { name: 'SparratenTagesgeld', ref: `'Einstellungen'!$B$${zeile}` },
   ];
-  return { zusatz: blaetter, fremdeStile, metadata, namen, hinweise };
+  // Einzahlungen aufs Gemeinschaftskonto laut Aufteilung → Soll-Überweisungen (Formel zeigt auf die Aufteilung)
+  const auf = (await leseArbeitsmappe(altBytes)).blaetter.get('Aufteilung');
+  const soll = [];
+  if (auf) {
+    const zz = auf.zellen; let kopf = -1;
+    for (let r = 1; r <= auf.zeilen; r++) if (zz.get('B' + r) === 'Monat' && typeof zz.get('D' + r) === 'number') { kopf = r; break; }
+    const zeileVon = (anf) => { for (let r = kopf + 1; r <= auf.zeilen; r++) { const l = zz.get('B' + r); if (typeof l === 'string' && l.trim().startsWith(anf)) return r; } return null; };
+    const gk = daten.konten.find((k) => k.id === 'KT01')?.name || 'Gemeinschaftskonto';
+    const privat = (p) => daten.konten.find((k) => k.rolle === 'privat' && k.inhaber === p)?.name;
+    for (let c = 2; kopf > 0 && c < 40; c++) {
+      const sp = c < 26 ? String.fromCharCode(65 + c) : 'A' + String.fromCharCode(65 + c - 26);
+      const mv = zz.get(sp + kopf); if (typeof mv !== 'number') break;
+      const monat = new Date(Date.UTC(1899, 11, 30) + Math.round(mv) * 864e5).toISOString().slice(0, 7);
+      for (const [person, label] of [['Kai', 'Kai → Gemeinschaftskonto'], ['Natalie', 'Natalie → Gemeinschaftskonto']]) {
+        const r = zeileVon(label); const von = privat(person); if (!r || !von) continue;
+        const v = zz.get(sp + r);
+        soll.push({ monat, von, nach: gk, soll: { f: `'Aufteilung'!${sp}${r}`, v: typeof v === 'number' ? v : 0 }, bemerkung: 'aus der Aufteilung' });
+      }
+    }
+  }
+  return { zusatz: blaetter, fremdeStile, metadata, namen, hinweise, soll };
 }
 
 /** Depot aus Kai_Privat.xlsx (verweist nur auf „TR Buchungen“, das gleich aufgebaut bleibt). */
