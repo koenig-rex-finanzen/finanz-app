@@ -13,6 +13,9 @@ const zelle = (typ, v) => {
   return typeof v === 'number' ? v : String(v);
 };
 export class Doppelt extends od.Doppelt {}
+// Excel-Sitzung (für Tests austauschbar)
+let mitSitzung = (ort, f) => od.mitSitzung(ort, f);
+export const _sitzungFuerTest = (f) => { mitSitzung = f; };
 
 // ---------------------------------------------------------------- Finden
 
@@ -87,7 +90,7 @@ async function tabellenGrenzen(api, blatt) {
  * @returns {Promise<number>} Zeilennummer
  */
 export function zeileNeu(ort, blatt, obj, { doppelt } = {}) {
-  return od.mitSitzung(ort, async (api) => {
+  return mitSitzung(ort, async (api) => {
     const { erste, letzte } = await tabellenGrenzen(api, blatt);
     const sps = spalten(blatt);
     const vorhanden = (await api.lies(blatt, `A${erste}:${sps.at(-1).buchst}${letzte}`)).values;
@@ -106,7 +109,7 @@ export function zeileNeu(ort, blatt, obj, { doppelt } = {}) {
 
 /** Ändert eine Zeile. Prüft vorher, dass in Spalte A noch der erwartete Wert steht (z. B. Nr), damit nie die falsche Zeile überschrieben wird. */
 export function zeileAendern(ort, blatt, zeile, erwartet, obj) {
-  return od.mitSitzung(ort, async (api) => {
+  return mitSitzung(ort, async (api) => {
     const a = (await api.lies(blatt, `A${zeile}`)).values[0][0];
     if (String(a ?? '') !== String(erwartet ?? '')) throw new Error('Die Zeile hat sich in der Zwischenzeit geändert. Bitte neu laden.');
     await zeileSchreiben(api, blatt, zeile, zeilenWerte(blatt, obj));
@@ -116,7 +119,7 @@ export function zeileAendern(ort, blatt, zeile, erwartet, obj) {
 
 /** Leert eine Zeile (alle Spalten ohne Formel). Prüft vorher Spalte A. */
 export function zeileLeeren(ort, blatt, zeile, erwartet) {
-  return od.mitSitzung(ort, async (api) => {
+  return mitSitzung(ort, async (api) => {
     const a = (await api.lies(blatt, `A${zeile}`)).values[0][0];
     if (String(a ?? '') !== String(erwartet ?? '')) throw new Error('Die Zeile hat sich in der Zwischenzeit geändert. Bitte neu laden.');
     await zeileSchreiben(api, blatt, zeile, spalten(blatt).map((s) => (s.typ === 'f' ? undefined : '')));
@@ -127,7 +130,7 @@ export function zeileLeeren(ort, blatt, zeile, erwartet) {
 
 /** Setzt einen Wert im Blatt „Einstellungen“ (legt den Schlüssel an, wenn es ihn noch nicht gibt). */
 export function einstellungSetzen(ort, schluessel, wert, erklaerung) {
-  return od.mitSitzung(ort, async (api) => {
+  return mitSitzung(ort, async (api) => {
     const { erste, letzte } = await tabellenGrenzen(api, 'Einstellungen');
     const v = (await api.lies('Einstellungen', `A${erste}:C${letzte}`)).values;
     let i = v.findIndex((r) => r[0] === schluessel);

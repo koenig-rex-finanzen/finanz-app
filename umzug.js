@@ -85,7 +85,7 @@ async function lauf(echt) {
         : `<p style="margin-top:16px">Alles gleich oder erklärt. Für den echten Umzug „UMZUG“ eintippen:</p><input id="u-ok" class="suche" autocomplete="off"><p><button class="knopf" id="u-echt">Echten Umzug starten</button></p>`) : ''}`;
     if (!echt) {
       await hochladen(r, false);
-      const b = $('#u-echt'); if (b) b.onclick = () => { if ($('#u-ok').value.trim() === 'UMZUG') lauf(true); else alert('Bitte „UMZUG“ eintippen.'); };
+      const b = $('#u-echt'); if (b) b.onclick = () => { if ($('#u-ok').value.trim() === 'UMZUG') lauf(true); else schreib('Bitte „UMZUG“ eintippen.'); };
     } else {
       if (unerklaert.length) throw new Error('Unerklärte Abweichungen – abgebrochen.');
       schreib('Sichere die alten Dateien …');

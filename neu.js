@@ -10,6 +10,8 @@ import * as hilfe from './hilfe.js';
 
 export const VERSION = '1.0.0';
 const $ = (s, r = document) => r.querySelector(s);
+/** Gemeinsames Dialogfenster, immer ohne alten Schließen-Handler. */
+const dialog = () => { const d = document.querySelector('#menu'); d.onclose = null; d.returnValue = ''; return d; };
 const h = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const eur = (n) => (n < 0 ? '−' : '') + Math.abs(n || 0).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 const heute = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
@@ -254,7 +256,7 @@ function extraSeite(id) {
     const a2 = z.d.gemeinsam.m.aufteilung?.[z.monat];
     inhalt = a2 ? `<div class="konten">${Object.entries(a2).map(([k, v]) => `<div class="konto"><span></span><div><div class="name">${h(k)}</div></div><div class="betrag">${Math.abs(v) < 1.0001 && /anteil/i.test(k) ? Math.round(v * 100) + ' %' : eur(v)}</div></div>`).join('')}</div>` : '<p class="hint">Für diesen Monat gibt es noch keine Aufteilung.</p>';
   } else inhalt = `<p class="hint">Diese Seite kommt mit der nächsten Etappe in die neue App. Bis dahin steht alles in der Excel-Datei.</p>${haupt()?.webUrl ? `<p><a class="knopf leise" href="${h(haupt().webUrl)}" target="_blank" rel="noopener">Excel-Datei öffnen</a></p>` : ''}`;
-  const dlg = $('#menu');
+  const dlg = dialog();
   dlg.innerHTML = `<h2>${h(FUNKTIONEN[id].titel)}</h2>${inhalt}<div class="knoepfe"><button class="knopf leise" id="dlg-zu">Schließen</button></div>`;
   dlg.showModal(); $('#dlg-zu').onclick = () => dlg.close();
 }
@@ -412,7 +414,7 @@ function formular(alt, altDatei) {
   const x = alt || { art: 'Ausgabe', datum: H, giltFuer: H.slice(0, 7), von: konten[0]?.name, nach: '' };
   const kontoSeite = ['Einnahme'].includes(x.art) ? x.nach : x.von;
   const gegen = x.art === 'Einnahme' ? x.von : x.nach;
-  const dlg = $('#menu');
+  const dlg = dialog();
   dlg.innerHTML = `<form method="dialog" id="bu-form"><h2>${alt ? `Buchung ${h(alt.nr)} ändern` : 'Buchung eintragen'}</h2>
     <div class="seg" style="grid-template-columns:repeat(3,1fr)" aria-label="Art">${LISTEN.Arten.map((r) => `<label><input type="radio" name="art" value="${r}" ${x.art === r ? 'checked' : ''}><span>${r.replace('In Topf legen', 'In Topf').replace('Aus Topf nehmen', 'Aus Topf')}</span></label>`).join('')}</div>
     <div class="zwei"><label class="feld"><span>Betrag</span><input name="betrag" inputmode="decimal" required value="${alt ? String(alt.betrag).replace('.', ',') : ''}" placeholder="0,00"></label>
@@ -438,7 +440,7 @@ function formular(alt, altDatei) {
   };
   f.querySelectorAll('input[name=art]').forEach((r) => (r.onchange = aktual)); f.gegen.onchange = aktual; f.beschreibung.onchange = aktual; aktual();
   f.datum.onchange = () => { if (!alt) f.giltFuer.value = f.datum.value.slice(0, 7); };
-  dlg.onclose = () => { if (dlg.returnValue !== 'ok') return; const daten = Object.fromEntries(new FormData(f)); buchungSpeichern(daten, alt, altDatei); };
+  dlg.onclose = () => { dlg.onclose = null; if (dlg.returnValue !== 'ok') return; const daten = Object.fromEntries(new FormData(f)); buchungSpeichern(daten, alt, altDatei); };
 }
 
 function buchungAus(d) {
@@ -473,16 +475,31 @@ function buchungSpeichern(daten, alt, altDatei) {
         gegenstueck: anderes ? `${anderes === 'tagesgeld' ? 'Tagesgeld' : 'Gemeinsam'} ${nr}` : null };
       const eTag = z.d[d].eTag;
       try { await D.zeileNeu(z.d[d].ort, 'Buchungen', zeile, { doppelt: D.gleicheBuchung(b) }); }
-      catch (e) { if (e instanceof od.Doppelt && confirm(`Diese Buchung steht schon drin (${e.treffer.map((t) => t.nr).join(', ')}). Trotzdem eintragen?`)) await D.zeileNeu(z.d[d].ort, 'Buchungen', zeile); else if (e instanceof od.Doppelt) return; else throw e; }
+      catch (e) {
+        if (!(e instanceof od.Doppelt)) throw e;
+        if (!(await frage(`Diese Buchung steht schon drin (${e.treffer.map((t) => t.nr).join(', ')}). Trotzdem eintragen?`, 'Trotzdem eintragen'))) return;
+        await D.zeileNeu(z.d[d].ort, 'Buchungen', zeile);
+      }
       z.d[d].m.buchungen.push({ ...zeile, _zeile: -1 });
       neuLaden(d, eTag).then(() => zeichnen());
     }
   });
 }
 
+/** Ja/Nein-Frage als App-Dialog (blockiert den Browser nicht wie confirm()). */
+function frage(text, ja = 'Ja') {
+  return new Promise((ok) => {
+    const dlg = dialog();
+    dlg.innerHTML = `<p>${h(text)}</p><div class="knoepfe"><button class="knopf leise" id="f-nein">Abbrechen</button><button class="knopf" id="f-ja">${h(ja)}</button></div>`;
+    dlg.showModal();
+    $('#f-nein').onclick = () => { dlg.close(); ok(false); };
+    $('#f-ja').onclick = () => { dlg.close(); ok(true); };
+  });
+}
+
 function loeschen(d, nr) {
   const x = z.d[d].m.buchungen.find((b) => b.nr === nr); if (!x) return;
-  const dlg = $('#menu');
+  const dlg = dialog();
   dlg.innerHTML = `<h2>Buchung ${h(nr)} löschen?</h2><p>${h(x.posten || x.beschreibung || '')} · ${eur(x.betrag)} am ${datumKurz(x.datum)}${x.datum.slice(0, 4)}</p>
     ${x.gegenstueck ? `<p class="hint">Sie steht auch in der Datei ${h(x.gegenstueck.split(' ')[0])} und wird dort ebenfalls gelöscht.</p>` : ''}
     ${x.quelle === 'CSV' ? '<p class="hint">Sie kam aus einem Kontoauszug. Beim nächsten Abgleich wird die Bankzeile wieder als „neu“ angeboten.</p>' : ''}
