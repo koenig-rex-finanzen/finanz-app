@@ -183,7 +183,8 @@ function buchungenAnsicht() {
 // ---------------------------------------------------------------- Zeichnen
 
 function zeichnen() {
-  document.body.dataset.bereich = z.bereich === 'gemeinsam' ? 'gemeinsam' : FARBE[privat()];
+  // Bereichsfarbe an body und html: so greifen auch die kräftigen Themen (Hintergrund, Knöpfe) von Kais und Natalies Bereich
+  document.body.dataset.bereich = document.documentElement.dataset.bereich = z.bereich === 'gemeinsam' ? 'gemeinsam' : FARBE[privat()];
   const a = ansicht();
   const inhalt = !a ? (z.laedt ? '<p class="leer">Wird geladen … (das kann bei langsamem OneDrive etwas dauern)</p>' : z.fehler ? '' : '<p class="leer">Noch nichts geladen.</p>')
     : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()

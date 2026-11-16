@@ -718,14 +718,14 @@ nav.sechs button svg{width:22px;height:22px}
 
 /* ---------- Einheitliche Bereiche (neue Oberfläche, app/neu.js) ---------- */
 body.einheit nav .wrap{grid-template-columns:repeat(5,1fr)}
-body.einheit[data-bereich="kai"]{--gem:#2F64A8;--gem-soft:#DCE6F4}
-body.einheit[data-bereich="natalie"]{--gem:#A8437A;--gem-soft:#F2DDE8}
+body.einheit[data-bereich="kai"]{--gem:#1F5BFF;--gem-soft:#D6E5FF;--akzent:#1F5BFF;--auf-akzent:#FFFFFF}
+body.einheit[data-bereich="natalie"]{--gem:#D6338A;--gem-soft:#FCDCEC;--akzent:#D6338A;--auf-akzent:#FFFFFF;--bg:#FDF0F6;--sunk:#F9E1EE;--line:#F2D3E3}
 @media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]) body.einheit[data-bereich="kai"]{--gem:#86A9E2;--gem-soft:#1F2B40}
-  :root:not([data-theme="light"]) body.einheit[data-bereich="natalie"]{--gem:#E28DBB;--gem-soft:#3A2230}
+  :root:not([data-theme="light"]) body.einheit[data-bereich="kai"]{--gem:#5B9BFF;--gem-soft:#16314A;--akzent:#5B9BFF;--auf-akzent:#06122B}
+  :root:not([data-theme="light"]) body.einheit[data-bereich="natalie"]{--gem:#F27DB5;--gem-soft:#4A2238;--akzent:#F27DB5;--auf-akzent:#2B1420;--bg:#1C1219;--sunk:#33202C;--line:#45293A}
 }
-:root[data-theme="dark"] body.einheit[data-bereich="kai"]{--gem:#86A9E2;--gem-soft:#1F2B40}
-:root[data-theme="dark"] body.einheit[data-bereich="natalie"]{--gem:#E28DBB;--gem-soft:#3A2230}
+:root[data-theme="dark"] body.einheit[data-bereich="kai"]{--gem:#5B9BFF;--gem-soft:#16314A;--akzent:#5B9BFF;--auf-akzent:#06122B}
+:root[data-theme="dark"] body.einheit[data-bereich="natalie"]{--gem:#F27DB5;--gem-soft:#4A2238;--akzent:#F27DB5;--auf-akzent:#2B1420;--bg:#1C1219;--sunk:#33202C;--line:#45293A}
 body.einheit nav button[aria-selected="true"]{color:var(--gem)}
 body.einheit .bereich-wahl button[aria-selected="true"]{color:var(--gem)}
 body.einheit .hero p{font-size:24px}
@@ -744,3 +744,14 @@ body.einheit button.topf{width:100%;text-align:left}
 body.einheit .knoepfe{display:flex;gap:10px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap}
 body.einheit .meins h2::before,body.einheit .kai h2::before{display:none}
 body.einheit .meins h2,body.einheit .kai h2{display:block}
+
+/* Bereichsfarben kräftig (Kai Blau, Natalie Pink-Rosa) – neue Oberfläche */
+body.einheit[data-bereich="kai"]{background:radial-gradient(120% 55% at 100% 0,color-mix(in srgb,var(--gem) 26%,transparent) 0,transparent 62%),radial-gradient(90% 45% at 0 0,color-mix(in srgb,#5BB8F5 22%,transparent) 0,transparent 60%) var(--bg) fixed}
+body.einheit[data-bereich="natalie"]{background:radial-gradient(120% 55% at 100% 0,color-mix(in srgb,var(--gem) 24%,transparent) 0,transparent 62%),radial-gradient(90% 45% at 0 0,color-mix(in srgb,#F59CC6 26%,transparent) 0,transparent 60%) var(--bg) fixed}
+body.einheit:not([data-bereich="gemeinsam"]) header{background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(10px);box-shadow:inset 0 4px 0 var(--gem)}
+body.einheit:not([data-bereich="gemeinsam"]) .fab,body.einheit:not([data-bereich="gemeinsam"]) .knopf:not(.leise){background:var(--gem);color:var(--auf-akzent)}
+body.einheit:not([data-bereich="gemeinsam"]) .fab{box-shadow:0 8px 22px color-mix(in srgb,var(--gem) 45%,transparent)}
+body.einheit:not([data-bereich="gemeinsam"]) .bereich-wahl button[aria-selected="true"]{background:var(--gem);color:var(--auf-akzent)}
+body.einheit:not([data-bereich="gemeinsam"]) .hero strong{color:var(--gem)}
+body.einheit:not([data-bereich="gemeinsam"]) .konten,body.einheit:not([data-bereich="gemeinsam"]) .buchungen,body.einheit:not([data-bereich="gemeinsam"]) .rechnung{box-shadow:0 1px 0 var(--line),0 0 0 1px color-mix(in srgb,var(--gem) 14%,transparent)}
+body.einheit:not([data-bereich="gemeinsam"]) nav{border-top:2px solid var(--gem)}
