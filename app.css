@@ -755,3 +755,26 @@ body.einheit:not([data-bereich="gemeinsam"]) .bereich-wahl button[aria-selected=
 body.einheit:not([data-bereich="gemeinsam"]) .hero strong{color:var(--gem)}
 body.einheit:not([data-bereich="gemeinsam"]) .konten,body.einheit:not([data-bereich="gemeinsam"]) .buchungen,body.einheit:not([data-bereich="gemeinsam"]) .rechnung{box-shadow:0 1px 0 var(--line),0 0 0 1px color-mix(in srgb,var(--gem) 14%,transparent)}
 body.einheit:not([data-bereich="gemeinsam"]) nav{border-top:2px solid var(--gem)}
+
+/* Import (neue Oberfläche) */
+body.einheit .imp-liste{background:var(--surface);border-radius:16px;overflow:hidden}
+body.einheit .imp-z{padding:12px 14px;border-top:1px solid var(--line)}
+body.einheit .imp-z:first-child{border-top:0}
+body.einheit .imp-z.aus{opacity:.55}
+body.einheit .imp-kopf{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start}
+body.einheit .imp-kopf input[type=checkbox]{width:20px;height:20px;margin-top:2px;accent-color:var(--gem)}
+body.einheit .imp-kopf .name{font-weight:600;font-size:15px}
+body.einheit .imp-kopf .sub{font-size:13px;color:var(--muted);word-break:break-word}
+body.einheit .imp-kopf .betrag{font-weight:700;white-space:nowrap}
+body.einheit .imp-vorschlag{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:8px 0 0 30px;font-size:14px}
+body.einheit .imp-vorschlag select,body.einheit .imp-vorschlag input{height:36px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);padding:0 8px;font:inherit;font-size:14px;max-width:100%}
+body.einheit .imp-vorschlag input{flex:1 1 140px}
+body.einheit .imp-vorschlag small{flex-basis:100%}
+body.einheit .ampel{width:10px;height:10px;border-radius:5px;background:var(--muted);flex:none}
+body.einheit .ampel.sicher{background:var(--gem)}
+body.einheit .ampel.pruefen{background:var(--warn)}
+body.einheit .imp-entscheid{margin:8px 0 0 30px}
+body.einheit details.imp-gruppe{margin-top:12px}
+body.einheit details.imp-gruppe summary{cursor:pointer;font-weight:600;padding:8px 0}
+body.einheit .hinweis.ok{background:var(--gem-soft);color:var(--ink)}
+body.einheit label.knopf{cursor:pointer}

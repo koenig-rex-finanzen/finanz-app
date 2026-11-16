@@ -187,7 +187,7 @@ function zeichnen() {
   document.body.dataset.bereich = document.documentElement.dataset.bereich = z.bereich === 'gemeinsam' ? 'gemeinsam' : FARBE[privat()];
   const a = ansicht();
   const inhalt = !a ? (z.laedt ? '<p class="leer">Wird geladen … (das kann bei langsamem OneDrive etwas dauern)</p>' : z.fehler ? '' : '<p class="leer">Noch nichts geladen.</p>')
-    : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
+    : z.seite === 'import' ? importSeite() : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
       : z.tab === 'toepfe' ? (z.topf ? topfSeite(a) : toepfeSeite(a)) : mehrSeite();
   $('#app').innerHTML = `${kopf()}<main class="wrap einheit ${z.bereich === 'gemeinsam' ? '' : privat() === 'kai' ? 'kai' : 'meins'}">
     ${z.beispiel ? '<div class="hinweis info">Beispielmodus mit erfundenen Daten.</div>' : ''}
@@ -196,7 +196,7 @@ function zeichnen() {
     ${z.speichert ? `<div class="hinweis info">${h(z.speichert)}</div>` : ''}
     ${z.laedt && a ? '<div class="hinweis info">Wird aktualisiert …</div>' : ''}
     ${inhalt}</main>
-    ${a && z.tab === 'buchungen' ? `<button class="fab" id="eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>` : ''}
+    ${a && z.tab === 'buchungen' && !z.seite ? `<button class="fab" id="eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>` : ''}
     <nav><div class="wrap" role="tablist">${TABS.map(([id, name, pfad]) => `<button role="tab" aria-selected="${z.tab === id}" data-tab="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${pfad}</svg>${name}</button>`).join('')}</div></nav>`;
   verdrahten();
 }
@@ -367,8 +367,8 @@ function themaSetzen() {
 // ---------------------------------------------------------------- Bedienung
 
 function verdrahten() {
-  document.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { z.tab = b.dataset.tab; z.topf = null; z.offenNr = null; zeichnen(); scrollTo(0, 0); }));
-  document.querySelectorAll('[data-bereich]').forEach((b) => (b.onclick = () => { z.bereich = b.dataset.bereich === 'gemeinsam' ? 'gemeinsam' : 'privat'; z.topf = null; zeichnen(); }));
+  document.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { z.tab = b.dataset.tab; z.topf = null; z.offenNr = null; z.seite = null; zeichnen(); scrollTo(0, 0); }));
+  document.querySelectorAll('.bereich-wahl [data-bereich]').forEach((b) => (b.onclick = () => { z.bereich = b.dataset.bereich === 'gemeinsam' ? 'gemeinsam' : 'privat'; z.topf = null; z.seite = null; z.imp = null; zeichnen(); }));
   const mv = (n) => { const d = new Date(Date.UTC(+z.monat.slice(0, 4), +z.monat.slice(5, 7) - 1 + n, 1)); z.monat = d.toISOString().slice(0, 7); zeichnen(); };
   $('#m-zurueck')?.addEventListener('click', () => mv(-1)); $('#m-vor')?.addEventListener('click', () => mv(1));
   $('#neu-anmelden')?.addEventListener('click', () => ms.anmelden());
@@ -379,7 +379,8 @@ function verdrahten() {
   document.querySelectorAll('[data-loeschen]').forEach((b) => (b.onclick = () => { const [d, nr] = b.dataset.loeschen.split('|'); loeschen(d, nr); }));
   document.querySelectorAll('[data-topf]').forEach((b) => (b.onclick = () => { z.topf = b.dataset.topf; zeichnen(); scrollTo(0, 0); }));
   $('#topf-zurueck')?.addEventListener('click', () => { z.topf = null; zeichnen(); });
-  document.querySelectorAll('[data-seite]').forEach((b) => (b.onclick = () => extraSeite(b.dataset.seite)));
+  document.querySelectorAll('[data-seite]').forEach((b) => (b.onclick = () => { if (b.dataset.seite === 'import') { z.seite = 'import'; zeichnen(); scrollTo(0, 0); } else extraSeite(b.dataset.seite); }));
+  importVerdrahten();
   document.querySelectorAll('[data-funktion]').forEach((c) => (c.onchange = () => funktionSetzen(c.dataset.funktion, c.checked)));
   $('#wie-vorher')?.addEventListener('click', wieVorher);
   document.querySelectorAll('[data-hoch]').forEach((b) => (b.onclick = () => widgetSchieben(+b.dataset.hoch, -1)));
@@ -551,4 +552,119 @@ function loeschen(d, nr) {
     for (const [dd, y] of zeilen) { const eTag = z.d[dd].eTag; await D.zeileLeeren(z.d[dd].ort, 'Buchungen', y._zeile, y.nr); await neuLaden(dd, eTag); }
     z.offenNr = null;
   }); };
+}
+
+// ---------------------------------------------------------------- Import (Kontoauszug)
+// Ablauf: Export wählen → Abgleich (nichts wird geschrieben) → prüfen/ändern → „Übernehmen“ (eine Excel-Sitzung je Datei).
+
+const STATUS = {
+  neu: 'Neu', eingetragen: 'Schon eingetragen (Import-ID wird ergänzt)', vielleicht: 'Vielleicht schon eingetragen – bitte entscheiden',
+  importiert: 'Schon importiert', gegenbuchung: 'Gegenbuchung (steht im Export des anderen Kontos)', 'vor-stichtag': 'Vor dem Stichtag des Kontos', 'ohne-konto': 'Konto unbekannt',
+};
+const bereichsDateien = () => (z.bereich === 'gemeinsam' ? Object.fromEntries(['gemeinsam', 'tagesgeld'].filter((d) => z.d[d]).map((d) => [d, z.d[d].m])) : { [privat()]: z.d[privat()].m });
+const kategorienListe = () => [...new Set((haupt()?.m.kategorien || []).filter((k) => k.aktiv !== 'Nein').map((k) => k.name))];
+const postenListe = () => [...new Set([...(haupt()?.m.kosten || []), ...(haupt()?.m.einnahmen || [])].map((p) => p.posten).filter(Boolean))].sort();
+
+function importSeite() {
+  const i = z.imp;
+  const kopfzeile = `<button class="link" id="imp-zurueck">‹ Übersicht</button><h2>Import (Kontoauszug)</h2>`;
+  if (!i) {
+    return `<section>${kopfzeile}<p class="hint">Exporte aus der Bank-App wählen (VW Bank: CSV, c24: Transaktionen › Export › CSV). Mehrere Dateien auf einmal gehen auch.
+      Erst wird nur abgeglichen – geschrieben wird erst, wenn du „Übernehmen“ drückst.</p>
+      <p style="margin-top:12px"><label class="knopf"><input type="file" id="imp-datei" accept=".csv,text/csv,text/plain" multiple hidden>Export wählen</label></p>
+      ${z.impMeldung ? `<div class="hinweis info" style="margin-top:12px">${z.impMeldung}</div>` : ''}</section>`;
+  }
+  const e = i.ergebnis;
+  const zahl = (st) => e.zeilen.filter((l) => l.status === st).length;
+  const zeile = (l, idx, mitWahl) => {
+    const b = l.buchung;
+    const text = (l.zeile.beschreibung || l.zeile.text || '').slice(0, 90);
+    return `<div class="imp-z ${l.auswahl ? '' : 'aus'}"><div class="imp-kopf">
+      ${mitWahl ? `<input type="checkbox" data-imp-wahl="${idx}" ${l.auswahl ? 'checked' : ''} aria-label="übernehmen">` : '<span></span>'}
+      <div><div class="name">${datumKurz(l.zeile.datum)}${l.zeile.datum.slice(0, 4)} · ${h(l.konto?.name || '?')}</div><div class="sub">${h(text)}</div></div>
+      <div class="betrag ${l.zeile.betrag < 0 ? 'neg' : ''}">${eur(l.zeile.betrag)}</div></div>
+      ${b && l.status === 'neu' ? `<div class="imp-vorschlag"><span class="ampel ${l.ampel}"></span><span>${h(b.art)}: ${h(b.von)} → ${h(b.nach)}${b.giltFuer !== l.zeile.datum.slice(0, 7) ? ` · gilt für ${monatsname(b.giltFuer, true)}` : ''}</span>
+        ${b.art === 'Ausgabe' ? `<select data-imp-kat="${idx}"><option value="">Kategorie …</option>${kategorienListe().map((k) => `<option ${k === b.kategorie ? 'selected' : ''}>${h(k)}</option>`).join('')}</select>` : ''}
+        <input data-imp-posten="${idx}" list="imp-posten" placeholder="Posten (optional)" value="${h(b.posten || '')}">
+        ${l.grund ? `<small class="hint">${h(l.grund)}</small>` : ''}</div>` : `<div class="imp-vorschlag"><small class="hint">${h(l.grund || '')}</small></div>`}
+      ${l.status === 'vielleicht' ? `<div class="seg imp-entscheid">${[['gleich', `Ist ${l.kandidat.nr}`], ['neu', 'Neue Buchung'], ['', 'Überspringen']].map(([w, n]) => `<label><input type="radio" name="imp-e-${idx}" value="${w}" data-imp-entscheid="${idx}" ${(l.entscheidung || '') === w ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div>` : ''}
+    </div>`;
+  };
+  const gruppe = (st, offen) => {
+    const l = e.zeilen.map((x, idx) => [x, idx]).filter(([x]) => x.status === st);
+    if (!l.length) return '';
+    const wahl = ['neu', 'eingetragen'].includes(st);
+    const inhalt = l.map(([x, idx]) => zeile(x, idx, wahl)).join('');
+    return offen ? `<section><h3>${STATUS[st]} (${l.length})</h3><div class="imp-liste">${inhalt}</div></section>`
+      : `<details class="imp-gruppe"><summary>${STATUS[st]} (${l.length})</summary><div class="imp-liste">${inhalt}</div></details>`;
+  };
+  const neu = e.zeilen.filter((l) => l.auswahl && (l.status === 'neu' || (l.status === 'vielleicht' && l.entscheidung === 'neu'))).length;
+  const erg = e.zeilen.filter((l) => l.auswahl && (l.status === 'eingetragen' || (l.status === 'vielleicht' && l.entscheidung === 'gleich'))).length;
+  const nurDatei = Object.entries(e.nurDatei).flatMap(([k, l]) => l.filter((b) => !b.vorStichtag).map((b) => ({ ...b, konto: k })));
+  return `<section>${kopfzeile}
+    <div class="konten">${e.exporte.map((x) => `<div class="konto"><span class="dot" style="background:${x.konto ? 'var(--gem)' : 'var(--warn)'}"></span>
+      <div><div class="name">${h(x.konto || x.name)}</div><div class="sub">${h(x.name)} · ${x.anzahl} Zeilen${x.von ? ` · ${datumKurz(x.von)}–${datumKurz(x.bis)}${(x.bis || '').slice(0, 4)}` : ''}${x.fehler ? ' · ' + h(x.fehler) : ''}</div></div>
+      <div class="betrag">${x.saldo != null ? eur(x.saldo) : ''}</div></div>`).join('')}</div>
+    ${e.abgleich.map((s) => `<div class="hinweis ${Math.abs(s.rest) < 0.005 ? 'ok' : 'warn'}" style="margin-top:8px"><b>${h(s.konto)}</b>: Bank ${eur(s.bank)} · Datei ${eur(s.datei)} · mit dem Import ${eur(E.r2(s.datei + s.neu - s.fehlenSumme))}
+      ${Math.abs(s.rest) < 0.005 ? ' – passt genau.' : ` – es bleiben ${eur(s.rest)} Unterschied${s.unklar ? ` (${s.unklar} unklare Zeile${s.unklar > 1 ? 'n' : ''} unten)` : ''}.`}</div>`).join('')}
+    <p class="hint" style="margin-top:8px">${[['importiert'], ['gegenbuchung'], ['vor-stichtag'], ['ohne-konto']].map(([st]) => zahl(st) ? `${STATUS[st]}: ${zahl(st)}` : '').filter(Boolean).join(' · ')}</p></section>
+    ${gruppe('vielleicht', true)}${gruppe('neu', true)}${gruppe('eingetragen', false)}${gruppe('ohne-konto', false)}${gruppe('gegenbuchung', false)}${gruppe('importiert', false)}${gruppe('vor-stichtag', false)}
+    ${nurDatei.length ? `<details class="imp-gruppe"><summary>In eurer Datei, aber nicht auf dem Auszug (${nurDatei.length})</summary><div class="imp-liste">${nurDatei.map((b) => `<div class="imp-z"><div class="imp-kopf"><span></span><div><div class="name">${b.nr} · ${datumKurz(b.datum)} · ${h(b.konto)}</div><div class="sub">${h(b.posten || '')}</div></div><div class="betrag">${eur(b.betrag)}</div></div></div>`).join('')}</div></details>` : ''}
+    <datalist id="imp-posten">${postenListe().map((p) => `<option value="${h(p)}">`).join('')}</datalist>
+    <section><p class="hint">${neu} neue Buchung${neu === 1 ? '' : 'en'}, bei ${erg} vorhandenen wird die Import-ID ergänzt.</p>
+      <div class="knoepfe"><button class="knopf leise" id="imp-abbrechen">Verwerfen</button><button class="knopf" id="imp-ok" ${neu + erg ? '' : 'disabled'}>Übernehmen</button></div></section>`;
+}
+
+function importVerdrahten() {
+  $('#imp-zurueck')?.addEventListener('click', () => { z.seite = null; zeichnen(); });
+  $('#imp-abbrechen')?.addEventListener('click', () => { z.imp = null; z.impMeldung = null; zeichnen(); });
+  $('#imp-datei')?.addEventListener('change', (ev) => importLesen([...ev.target.files]));
+  document.querySelectorAll('[data-imp-wahl]').forEach((c) => (c.onchange = () => { z.imp.ergebnis.zeilen[+c.dataset.impWahl].auswahl = c.checked; zeichnen(); }));
+  document.querySelectorAll('[data-imp-kat]').forEach((c) => (c.onchange = () => { z.imp.ergebnis.zeilen[+c.dataset.impKat].buchung.kategorie = c.value || null; }));
+  document.querySelectorAll('[data-imp-posten]').forEach((c) => (c.onchange = () => { z.imp.ergebnis.zeilen[+c.dataset.impPosten].buchung.posten = c.value.trim() || null; }));
+  document.querySelectorAll('[data-imp-entscheid]').forEach((r) => (r.onchange = () => { const l = z.imp.ergebnis.zeilen[+r.dataset.impEntscheid]; l.entscheidung = r.value || null; l.auswahl = !!r.value; zeichnen(); }));
+  $('#imp-ok')?.addEventListener('click', importUebernehmen);
+}
+
+async function importLesen(dateien) {
+  if (!dateien.length) return;
+  if (Object.values(z.d).some((x) => x?.gespeichert)) { z.fehler = 'Bitte warten, bis die Dateien aus OneDrive geladen sind.'; return zeichnen(); }
+  try {
+    const I = await import('./kern/import.js'); const { csvText } = await import('./kern/csv.js');
+    const exporte = [];
+    for (const f of dateien) {
+      try { exporte.push(await I.lesen(csvText(new Uint8Array(await f.arrayBuffer())), f.name)); }
+      catch (e) { exporte.push({ name: f.name, fehler: e.message, zeilen: [] }); }
+    }
+    const ergebnis = I.abgleichen(exporte, bereichsDateien(), { kategorien: kategorienListe() });
+    z.imp = { ergebnis, bereich: z.bereich }; z.impMeldung = null; z.fehler = null;
+  } catch (e) { z.fehler = 'Der Export konnte nicht gelesen werden: ' + e.message; }
+  zeichnen(); scrollTo(0, 0);
+}
+
+function importUebernehmen() {
+  const i = z.imp; if (!i) return;
+  speichern('Import wird übernommen …', async () => {
+    const I = await import('./kern/import.js');
+    const dateien = bereichsDateien();
+    // Nummern über alle betroffenen Dateien fortlaufend
+    let letzte = null;
+    const nrFuer = () => {
+      const alle = Object.values(dateien).flatMap((m) => m.buchungen);
+      const n = E.neueNr({ buchungen: letzte ? [...alle, { nr: letzte }] : alle });
+      letzte = n; return n;
+    };
+    const p = I.plan(i.ergebnis, dateien, { artFuer: (b, d) => artFuerDatei(b, d), nrFuer });
+    const erg = []; const hinweise = [];
+    for (const [d, x] of Object.entries(p)) {
+      if (!x.neu.length && !x.ergaenzen.length) continue;
+      const eTag = z.d[d].eTag;
+      const r = await D.importUebernehmen(z.d[d].ort, x);
+      erg.push(`${d === 'gemeinsam' ? 'Gemeinsam' : d === 'tagesgeld' ? 'Tagesgeld' : 'deine Datei'}: ${r.neu} neu, ${r.ergaenzt} ergänzt`);
+      hinweise.push(...r.uebersprungen);
+      await neuLaden(d, eTag);
+    }
+    z.imp = null;
+    z.impMeldung = `Übernommen – ${erg.join(' · ') || 'nichts zu tun'}.${hinweise.length ? ` Übersprungen: ${h(hinweise.join('; '))}.` : ''}`;
+  });
 }

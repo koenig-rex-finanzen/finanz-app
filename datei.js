@@ -128,6 +128,64 @@ export function zeileLeeren(ort, blatt, zeile, erwartet) {
   });
 }
 
+/**
+ * Import übernehmen – alles in einer Excel-Sitzung:
+ * 1. Import-IDs an vorhandene Buchungen anhängen (ergaenzen: [{nr, ids}]),
+ * 2. neue Buchungen in freie Zeilen schreiben (neu: [buchung]).
+ * Vorher wird in der Datei selbst noch einmal geprüft, ob eine Import-ID schon drinsteht (z. B. vom anderen Handy) – solche Zeilen werden übersprungen.
+ * @returns {Promise<{neu:number, ergaenzt:number, uebersprungen:string[]}>}
+ */
+export function importUebernehmen(ort, { neu = [], ergaenzen = [] }) {
+  return mitSitzung(ort, async (api) => {
+    const { erste, letzte } = await tabellenGrenzen(api, 'Buchungen');
+    const sps = spalten('Buchungen');
+    const iNr = sps.findIndex((s) => s.key === 'nr'), iId = sps.findIndex((s) => s.key === 'importId');
+    const v = (await api.lies('Buchungen', `A${erste}:${sps.at(-1).buchst}${letzte}`)).values;
+    const belegt = (r) => sps.some((s, j) => s.typ !== 'f' && r[j] !== '' && r[j] != null);
+    const idsDa = new Set(v.flatMap((r) => String(r[iId] ?? '').split(/\s+/).filter(Boolean)));
+    const nrDa = new Set(v.map((r) => String(r[iNr] ?? '')).filter(Boolean));
+    const uebersprungen = [];
+    // 1. Import-IDs ergänzen
+    let ergaenzt = 0;
+    for (const e of ergaenzen) {
+      const i = v.findIndex((r) => String(r[iNr]) === e.nr);
+      if (i < 0) { uebersprungen.push(`${e.nr} nicht gefunden`); continue; }
+      const alt = String(v[i][iId] ?? '').split(/\s+/).filter(Boolean);
+      const dazu = e.ids.filter((id) => !idsDa.has(id));
+      if (!dazu.length) continue;
+      const wert = [...alt, ...dazu].join(' ');
+      await api.schreib('Buchungen', `${sps[iId].buchst}${erste + i}`, [[wert]]);
+      v[i][iId] = wert; dazu.forEach((id) => idsDa.add(id)); ergaenzt++;
+    }
+    // 2. Neue Buchungen
+    const rein = [];
+    for (const b of neu) {
+      const eigene = String(b.importId || '').split(/\s+/).filter(Boolean);
+      if (eigene.some((id) => idsDa.has(id))) { uebersprungen.push(`${b.datum} ${b.betrag} € (schon importiert)`); continue; }
+      if (nrDa.has(b.nr)) throw new Error(`Die Nummer ${b.nr} ist inzwischen vergeben (jemand hat gleichzeitig eingetragen). Bitte neu laden und den Import wiederholen.`);
+      rein.push(b); eigene.forEach((id) => idsDa.add(id));
+    }
+    const freie = v.map((r, i) => (belegt(r) ? -1 : i)).filter((i) => i >= 0);
+    if (freie.length < rein.length) throw new Error(`Im Blatt „Buchungen“ ist nicht genug Platz (${freie.length} frei, ${rein.length} nötig). Bitte die Tabelle in Excel verlängern.`);
+    // zusammenhängende freie Zeilen in einem Rutsch schreiben
+    let k = 0;
+    while (k < rein.length) {
+      let n = 1;
+      while (k + n < rein.length && freie[k + n] === freie[k] + n) n++;
+      const z = erste + freie[k];
+      await api.schreib('Buchungen', `A${z}:${sps.at(-1).buchst}${z + n - 1}`, rein.slice(k, k + n).map((b) => zeilenWerte('Buchungen', b).map((x) => (x === undefined ? '' : x))));
+      k += n;
+    }
+    // 3. Gegenlesen
+    if (rein.length) {
+      const a = (await api.lies('Buchungen', `A${erste}:A${letzte}`)).values.map((r) => String(r[0] ?? ''));
+      const fehlt = rein.filter((b) => !a.includes(b.nr));
+      if (fehlt.length) throw new Error(`${fehlt.length} Buchung(en) wurden nicht wie erwartet gespeichert (${fehlt.map((b) => b.nr).join(', ')}). Bitte in Excel prüfen.`);
+    }
+    return { neu: rein.length, ergaenzt, uebersprungen };
+  });
+}
+
 /** Setzt einen Wert im Blatt „Einstellungen“ (legt den Schlüssel an, wenn es ihn noch nicht gibt). */
 export function einstellungSetzen(ort, schluessel, wert, erklaerung) {
   return mitSitzung(ort, async (api) => {
