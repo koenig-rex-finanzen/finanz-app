@@ -14,12 +14,15 @@ export class Doppelt extends Error {
 // Bei der Suche: „nicht da“ ist okay, aber Anmeldung/Netz-Probleme müssen durchgereicht werden
 const nurFehlend = (e) => { if (e instanceof AnmeldungNoetig || e instanceof KeinNetz) throw e; return null; };
 
+// Zeitgrenze: Antwortet OneDrive nicht, wird die Anfrage abgebrochen (statt ewig zu warten)
+const ZEIT = 120000;
+const mitZeit = (opts) => (opts.signal || typeof AbortSignal === 'undefined' || !AbortSignal.timeout ? opts : { ...opts, signal: AbortSignal.timeout(ZEIT) });
 async function graph(pfad, { roh = false, ...opts } = {}) {
   let t;
   try { t = await token(); } catch { throw new KeinNetz(); }
   if (!t) throw new AnmeldungNoetig();
   let r;
-  try { r = await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, { ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } }); }
+  try { r = await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, mitZeit({ ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } })); }
   catch { throw new KeinNetz(); }
   if (r.status === 401) throw new AnmeldungNoetig();
   if (roh) { if (!r.ok) throw new Error(`OneDrive meldet Fehler ${r.status}`); return r; }
@@ -350,7 +353,7 @@ async function rohAnfrage(pfad, opts = {}) {
   let t;
   try { t = await token(); } catch { throw new KeinNetz(); }
   if (!t) throw new AnmeldungNoetig();
-  try { return await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, { cache: 'no-store', ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } }); }
+  try { return await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, mitZeit({ cache: 'no-store', ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } })); }
   catch { throw new KeinNetz(); }
 }
 

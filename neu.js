@@ -88,29 +88,58 @@ function anmeldeSeite() {
   $('#anmelden').onclick = () => ms.anmelden();
 }
 
-async function allesLaden(still = false) {
-  if (z.laedt) return; z.laedt = true; if (!still) zeichnen();
+// Letzter Stand auf dem Gerät (Cache-Speicher des Browsers), damit die App sofort und auch ohne Netz etwas zeigt
+const SPEICHER = 'unser-geld-daten';
+async function zwischenSpeichern(b, d) {
+  try { const c = await caches.open(SPEICHER); await c.put(new Request(`./__daten/${z.test ? 'test-' : ''}${b}`), new Response(d.bytes, { headers: { 'x-etag': d.eTag || '', 'x-url': d.webUrl || '', 'x-ort': JSON.stringify(d.ort) } })); } catch {}
+}
+async function ausSpeicher(b) {
   try {
-    const alt = await od.dateiFinden().catch(() => null);
-    if (!z.person && alt) z.person = (await od.dateiHerkunft(alt.ort)) === 'eigen' ? CONFIG.besitzer : CONFIG.besitzer === 'Kai' ? 'Natalie' : 'Kai';
+    const c = await caches.open(SPEICHER); const r = await c.match(`./__daten/${z.test ? 'test-' : ''}${b}`); if (!r) return null;
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    return { ort: JSON.parse(r.headers.get('x-ort') || 'null'), eTag: r.headers.get('x-etag'), webUrl: r.headers.get('x-url'), m: await E.leseDatei(bytes), bytes, gespeichert: true };
+  } catch { return null; }
+}
+
+async function allesLaden(still = false) {
+  if (z.laedt) return; z.laedt = true;
+  try {
+    // Wer ist angemeldet? (gemerkt, sonst über die alte gemeinsame Datei)
+    try { z.person ||= localStorage.getItem('ug.neu.person'); } catch {}
+    if (!z.person) {
+      const alt = await od.dateiFinden().catch(() => null);
+      if (alt) z.person = (await od.dateiHerkunft(alt.ort)) === 'eigen' ? CONFIG.besitzer : CONFIG.besitzer === 'Kai' ? 'Natalie' : 'Kai';
+      if (z.person) { try { localStorage.setItem('ug.neu.person', z.person); } catch {} }
+    }
     z.person ||= 'Kai';
     const liste = ['gemeinsam', 'tagesgeld', privat()];
-    for (const b of liste) {
-      const f = await D.finden(b);
-      if (!f) { if (b !== privat()) throw new Error(`Die Datei für „${b}“ wurde nicht gefunden.`); continue; }
-      const alt2 = z.d[b];
-      if (still && alt2) { const it = await od.info(f.ort).catch(() => null); if (it?.eTag === alt2.eTag) continue; }
-      z.d[b] = await D.laden(f);
+    // Sofort den letzten Stand vom Gerät zeigen
+    if (!still) {
+      for (const b of liste) if (!z.d[b]) { const x = await ausSpeicher(b); if (x) z.d[b] = x; }
+      zeichnen();
     }
-    z.fehler = null;
-  } catch (e) {
-    z.fehler = e instanceof od.AnmeldungNoetig ? 'Die Anmeldung ist abgelaufen. Bitte neu anmelden.' : e.message;
+    // Dann alle Dateien gleichzeitig aus OneDrive
+    const fehler = [];
+    await Promise.all(liste.map(async (b) => {
+      try {
+        const f = await D.finden(b);
+        if (!f) { if (b !== privat()) fehler.push(`Die Datei für „${b}“ wurde nicht gefunden.`); return; }
+        const vorher = z.d[b];
+        if (vorher && !vorher.gespeichert) { const it = await od.info(f.ort).catch(() => null); if (it?.eTag === vorher.eTag) return; }
+        if (vorher?.gespeichert) { const it = await od.info(f.ort).catch(() => null); if (it?.eTag && it.eTag === vorher.eTag) { vorher.gespeichert = false; vorher.ort = f.ort; return; } }
+        const d = await D.laden(f);
+        z.d[b] = d; zwischenSpeichern(b, d);
+        zeichnen();
+      } catch (e) { fehler.push(e instanceof od.AnmeldungNoetig ? 'Die Anmeldung ist abgelaufen. Bitte neu anmelden.' : e.message); }
+    }));
+    const offline = liste.some((b) => z.d[b]?.gespeichert);
+    z.fehler = fehler.length ? (offline ? 'Keine Verbindung zu OneDrive – ihr seht den zuletzt geladenen Stand. ' : '') + fehler[0] : null;
   } finally { z.laedt = false; zeichnen(); }
 }
 async function neuLaden(b, alterETag) {
   const it = await D.aufNeueVersionWarten(z.d[b].ort, alterETag).catch(() => null);
   const f = await D.finden(b);
-  if (f) z.d[b] = await D.laden(f);
+  if (f) { z.d[b] = await D.laden(f); zwischenSpeichern(b, z.d[b]); }
   return !!it;
 }
 
@@ -156,7 +185,7 @@ function buchungenAnsicht() {
 function zeichnen() {
   document.body.dataset.bereich = z.bereich === 'gemeinsam' ? 'gemeinsam' : FARBE[privat()];
   const a = ansicht();
-  const inhalt = !a ? (z.laedt ? '<p class="leer">Wird geladen …</p>' : z.fehler ? '' : '<p class="leer">Noch nichts geladen.</p>')
+  const inhalt = !a ? (z.laedt ? '<p class="leer">Wird geladen … (das kann bei langsamem OneDrive etwas dauern)</p>' : z.fehler ? '' : '<p class="leer">Noch nichts geladen.</p>')
     : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
       : z.tab === 'toepfe' ? (z.topf ? topfSeite(a) : toepfeSeite(a)) : mehrSeite();
   $('#app').innerHTML = `${kopf()}<main class="wrap einheit ${z.bereich === 'gemeinsam' ? '' : privat() === 'kai' ? 'kai' : 'meins'}">
@@ -164,6 +193,7 @@ function zeichnen() {
     ${z.test ? '<div class="hinweis info">Testbetrieb mit Testdateien – hier Eingetragenes landet nicht in euren echten Dateien.</div>' : ''}
     ${z.fehler ? `<div class="hinweis warn">${h(z.fehler)} ${/Anmeldung/.test(z.fehler) ? '<button class="link" id="neu-anmelden">Neu anmelden</button>' : ''}</div>` : ''}
     ${z.speichert ? `<div class="hinweis info">${h(z.speichert)}</div>` : ''}
+    ${z.laedt && a ? '<div class="hinweis info">Wird aktualisiert …</div>' : ''}
     ${inhalt}</main>
     ${a && z.tab === 'buchungen' ? `<button class="fab" id="eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>` : ''}
     <nav><div class="wrap" role="tablist">${TABS.map(([id, name, pfad]) => `<button role="tab" aria-selected="${z.tab === id}" data-tab="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${pfad}</svg>${name}</button>`).join('')}</div></nav>`;
@@ -354,11 +384,12 @@ function verdrahten() {
   document.querySelectorAll('[data-hoch]').forEach((b) => (b.onclick = () => widgetSchieben(+b.dataset.hoch, -1)));
   document.querySelectorAll('[data-runter]').forEach((b) => (b.onclick = () => widgetSchieben(+b.dataset.runter, 1)));
   document.querySelectorAll('input[name=thema]').forEach((r) => (r.onchange = () => { try { localStorage.setItem('ug.thema', r.value); } catch {} themaSetzen(); }));
-  $('#abmelden')?.addEventListener('click', () => { ms.abmelden(); try { localStorage.removeItem('ug.neu.aktiv'); } catch {} location.reload(); });
+  $('#abmelden')?.addEventListener('click', () => { ms.abmelden(); try { localStorage.removeItem('ug.neu.aktiv'); localStorage.removeItem('ug.neu.person'); caches.delete(SPEICHER); } catch {} location.reload(); });
 }
 
 async function speichern(text, arbeit) {
   if (z.speichert) return;
+  if (Object.values(z.d).some((x) => x?.gespeichert)) { z.fehler = 'Gerade wird der zuletzt geladene Stand gezeigt. Bitte warten, bis die Dateien aus OneDrive geladen sind.'; return zeichnen(); }
   if (z.beispiel) { z.fehler = 'Beispielmodus: Es wird nichts gespeichert.'; return zeichnen(); }
   z.speichert = text; zeichnen();
   try { await arbeit(); z.fehler = null; } catch (e) { z.fehler = e instanceof od.AnmeldungNoetig ? 'Die Anmeldung ist abgelaufen. Bitte neu anmelden.' : e.message; }
