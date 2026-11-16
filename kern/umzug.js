@@ -71,7 +71,9 @@ export function gemeinsamUndTagesgeld(alt, opt = {}) {
     const inT = spar.has(b.von) || spar.has(b.nach), inG = gem.has(b.von) || gem.has(b.nach);
     if (inT) tg.push({ ...basis(b), art: artFuer(b, spar), topf: b.topf, gegenstueck: inG ? `Gemeinsam ${b.nr}` : null });
     if (inG || !inT) {
-      const x = { ...basis(b), art: artFuer(b, gem), topf: null, gegenstueck: inT ? `Tagesgeld ${b.nr}` : null };
+      // In Gemeinsam bleibt die Art wie bisher (Sicht des Haushalts: Einnahme = von außen, Umbuchung = zwischen euren Konten).
+      // So bleiben Jahr-Übersicht und Ist-Werte gleich. Nur in Tagesgeld wird die Art neu bestimmt (Töpfe rechnen über die Art).
+      const x = { ...basis(b), art: b.art, topf: null, gegenstueck: inT ? `Tagesgeld ${b.nr}` : null };
       if (b.topf && !inT) x.kommentar = [b.kommentar, `früher Topf: ${b.topf} (zählte nicht für den Topf)`].filter(Boolean).join(' · ');
       if (!inG && !inT) hinweise.push(`${b.nr}: berührt weder Gemeinschafts- noch Sparkonto, liegt jetzt in Gemeinsam`);
       gm.push(x);
