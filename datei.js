@@ -233,6 +233,9 @@ export function gleicheBuchung(b) {
     && String(r[sp.nach]) === b.nach && Math.abs(Number(r[sp.betrag]) - Number(b.betrag)) < 0.005;
 }
 
+/** Wert der ersten Spalte, wie er in Excel steht (für die Prüfung beim Ändern/Löschen). */
+export const ersteSpalte = (blatt, obj) => zeilenWerte(blatt, obj)[0];
+
 export { KOPFZEILE, ERSTE_ZEILE };
 export const aufNeueVersionWarten = od.aufNeueVersionWarten;
 export const sicherungAnlegen = od.sicherungAnlegen;

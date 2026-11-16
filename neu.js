@@ -4,7 +4,7 @@ import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 import * as D from './datei.js';
 import * as E from './kern/einheit.js';
-import { FUNKTIONEN, WIDGETS_START, VORHER_AKTIV, LISTEN, SPARPLAN } from './kern/format.js';
+import { FUNKTIONEN, WIDGETS_START, VORHER_AKTIV, LISTEN, SPARPLAN, BLAETTER, spalten as verwSpalten } from './kern/format.js';
 import { CONFIG } from './config.js';
 import * as hilfe from './hilfe.js';
 
@@ -187,7 +187,7 @@ function zeichnen() {
   document.body.dataset.bereich = document.documentElement.dataset.bereich = z.bereich === 'gemeinsam' ? 'gemeinsam' : FARBE[privat()];
   const a = ansicht();
   const inhalt = !a ? (z.laedt ? '<p class="leer">Wird geladen … (das kann bei langsamem OneDrive etwas dauern)</p>' : z.fehler ? '' : '<p class="leer">Noch nichts geladen.</p>')
-    : z.seite === 'import' ? importSeite() : z.seite === 'kontostand-pruefen' ? kontostandSeite() : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
+    : z.seite === 'verwaltung' ? verwaltungSeite() : z.seite === 'import' ? importSeite() : z.seite === 'kontostand-pruefen' ? kontostandSeite() : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
       : z.tab === 'toepfe' ? (z.topf ? topfSeite(a) : toepfeSeite(a)) : mehrSeite();
   $('#app').innerHTML = `${kopf()}<main class="wrap einheit ${z.bereich === 'gemeinsam' ? '' : privat() === 'kai' ? 'kai' : 'meins'}">
     ${z.beispiel ? '<div class="hinweis info">Beispielmodus mit erfundenen Daten.</div>' : ''}
@@ -352,7 +352,9 @@ function mehrSeite() {
     <p style="margin-top:12px"><button class="knopf leise" id="wie-vorher">Wie vor dem Umbau</button></p></section>
     ${reihe.length > 1 ? `<section><h2>Widgets anordnen</h2><div class="konten">${reihe.map((id, i) => `<div class="konto"><span></span><div><div class="name">${h(FUNKTIONEN[id].titel)}</div></div>
       <div><button class="link" data-hoch="${i}" ${i === 0 ? 'disabled' : ''} aria-label="nach oben">▲</button> <button class="link" data-runter="${i}" ${i === reihe.length - 1 ? 'disabled' : ''} aria-label="nach unten">▼</button></div></div>`).join('')}</div><p class="hint">„Extras“ bleibt immer ganz unten.</p></section>` : ''}
-    <section><h2>Verwaltung</h2><p class="hint">Kosten und Einnahmen, Konten, Kategorien, Limits und Regeln pflegt ihr vorerst direkt in der Excel-Datei. Die Bearbeitung in der App kommt mit der nächsten Etappe.</p>
+    <section><h2>Verwaltung</h2><p class="hint">${z.bereich === 'gemeinsam' ? 'Für euch beide.' : 'Nur deine Datei.'} Kosten, Einnahmen, Töpfe, Konten, Kategorien, Limits, Regeln und mehr direkt hier bearbeiten.</p>
+      <div class="kacheln" style="margin-bottom:12px">${verwaltungsBlaetter().map((v) => `<button class="kachel" data-verw="${h(v.blatt)}">${h(v.titel)}<div class="hint" style="font-weight:400">${v.zeilen.length} Einträge</div></button>`).join('')}</div>
+      <p class="hint">Oder direkt in Excel:</p>
       <div class="konten">${dateien.map(([b, n]) => `<a class="konto" href="${h(z.d[b].webUrl)}" target="_blank" rel="noopener"><span></span><div><div class="name">${n}</div><div class="sub">Excel-Datei öffnen</div></div><span>›</span></a>`).join('')}</div></section>
     <section><h2>Darstellung</h2><div class="seg" role="radiogroup">${[['auto', 'Automatisch'], ['hell', 'Hell'], ['dunkel', 'Dunkel']].map(([w, n]) => `<label><input type="radio" name="thema" value="${w}" ${thema === w ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div></section>
     <section><h2>App</h2><p class="hint">Version ${VERSION}${z.test ? ' · Testbetrieb' : ''} · angemeldet als ${h(z.person || '')}</p>
@@ -381,7 +383,7 @@ function verdrahten() {
   document.querySelectorAll('[data-topf]').forEach((b) => (b.onclick = () => { z.topf = b.dataset.topf; zeichnen(); scrollTo(0, 0); }));
   $('#topf-zurueck')?.addEventListener('click', () => { z.topf = null; zeichnen(); });
   document.querySelectorAll('[data-seite]').forEach((b) => (b.onclick = () => { if (['import', 'kontostand-pruefen'].includes(b.dataset.seite)) { z.seite = b.dataset.seite; zeichnen(); scrollTo(0, 0); } else extraSeite(b.dataset.seite); }));
-  importVerdrahten(); kontostandVerdrahten();
+  importVerdrahten(); kontostandVerdrahten(); verwaltungVerdrahten();
   document.querySelectorAll('[data-funktion]').forEach((c) => (c.onchange = () => funktionSetzen(c.dataset.funktion, c.checked)));
   $('#wie-vorher')?.addEventListener('click', wieVorher);
   document.querySelectorAll('[data-hoch]').forEach((b) => (b.onclick = () => widgetSchieben(+b.dataset.hoch, -1)));
@@ -788,4 +790,134 @@ function aufteilenDialog(d, nr, teileVorher, fehler) {
       await neuLaden(d, eTag);
     });
   };
+}
+
+// ---------------------------------------------------------------- Verwaltung (Tabellen der Datei bearbeiten)
+// Einheitlicher Editor nach kern/format.js. Namen, auf die Buchungen verweisen (Konto, Kategorie, Topf, Posten), werden
+// nach dem Anlegen nicht mehr umbenannt (sonst passen alte Buchungen nicht mehr) – stattdessen beenden/schließen/deaktivieren.
+
+const VERW = [
+  { blatt: 'Kosten', feld: 'kosten', titel: 'Kosten', name: (r) => r.posten, sub: (r) => `${eur(r.betrag || 0)} · ${r.rhythmus || ''}${r.konto ? ' · ' + r.konto : ''}${r.status && r.status !== 'aktiv' ? ' · ' + r.status : ''}`, fest: ['id', 'posten'], id: 'K', loeschen: false },
+  { blatt: 'Einnahmen', feld: 'einnahmen', titel: 'Einnahmen', name: (r) => r.posten, sub: (r) => `${eur(r.betrag || 0)} · ${r.rhythmus || ''}${r.konto ? ' · ' + r.konto : ''}${r.status && r.status !== 'aktiv' ? ' · ' + r.status : ''}`, fest: ['id', 'posten'], id: 'E', loeschen: false },
+  { blatt: 'Töpfe', feld: 'toepfe', titel: 'Töpfe', name: (r) => r.name, sub: (r) => `${r.sparrate ? eur(r.sparrate) + ' im Monat' : 'ohne Sparrate'}${r.bis ? ' · bis ' + r.bis : ''}`, fest: ['name'], loeschen: false },
+  { blatt: 'Konten', feld: 'konten', titel: 'Konten', name: (r) => r.name, sub: (r) => `${r.bank || ''} · ${r.eigen === 'Ja' ? 'eigenes Konto' : 'Gegenüber'}${r.status === 'geschlossen' ? ' · geschlossen' : ''}`, fest: ['id', 'name'], id: 'KT', loeschen: false },
+  { blatt: 'Kategorien', feld: 'kategorien', titel: 'Kategorien', name: (r) => r.name, sub: (r) => (r.aktiv === 'Nein' ? 'nicht aktiv' : r.erklaerung || ''), fest: ['name'], loeschen: false, ueberall: true },
+  { blatt: 'Limits', feld: 'limits', titel: 'Limits', name: (r) => r.kategorie, sub: (r) => `${eur(r.betrag || 0)} im Monat${r.bis ? ' · bis ' + r.bis : ''}`, fest: [], loeschen: true },
+  { blatt: 'Regeln', feld: 'regeln', titel: 'Regeln (Import)', name: (r) => `„${r.stichwort}“`, sub: (r) => [r.kategorie, r.posten, r.topf].filter(Boolean).join(' · '), fest: [], loeschen: true },
+  { blatt: 'Soll-Überweisungen', feld: 'soll', titel: 'Soll-Überweisungen', name: (r) => `${r.monat ? monatsname(r.monat, true) : ''}: ${r.von} → ${r.nach}`, sub: (r) => eur(r.soll || 0), fest: [], loeschen: true, nurOhneFormel: true },
+  { blatt: 'Erinnerungen', feld: 'erinnerungen', titel: 'Erinnerungen', name: (r) => r.text, sub: (r) => `${r.tag ? 'am ' + r.tag + '.' : ''}${r.aktiv === 'Nein' ? ' · aus' : ''}`, fest: ['id'], id: 'R', loeschen: true, zusatz: true },
+  { blatt: 'Offene Punkte', feld: 'offenePunkte', titel: 'Offene Punkte', name: (r) => r.thema || r.text, sub: (r) => `${r.status || ''} ${r.thema ? '· ' + (r.text || '') : ''}`.slice(0, 90), fest: ['nr'], id: '#', loeschen: true, zusatz: true },
+];
+/** Datei, in der ein Blatt im aktuellen Bereich gepflegt wird (Töpfe von Gemeinsam liegen im Tagesgeld). */
+const verwDatei = (blatt) => (z.bereich === 'gemeinsam' ? (blatt === 'Töpfe' ? 'tagesgeld' : 'gemeinsam') : privat());
+function verwaltungsBlaetter() {
+  // Soll-Überweisungen in Gemeinsam sind Formeln auf das Blatt „Aufteilung“ – dort nur in Excel ändern
+  return VERW.filter((v) => !(v.nurOhneFormel && z.bereich === 'gemeinsam')).map((v) => { const d = verwDatei(v.blatt); const m = z.d[d]?.m; if (!m || (v.zusatz && !m.blaetter?.includes(v.blatt))) return null; return { ...v, datei: d, zeilen: m[v.feld] || [] }; }).filter(Boolean);
+}
+
+function verwaltungSeite() {
+  const v = verwaltungsBlaetter().find((x) => x.blatt === z.verw?.blatt);
+  if (!v) { z.seite = null; return mehrSeite(); }
+  return `<section><button class="link" id="verw-zurueck">‹ Mehr</button><h2>${h(v.titel)}</h2>
+    <p class="hint">${h(BLAETTER_TEXT[v.blatt] || '')}${v.datei === 'tagesgeld' ? ' (Datei Tagesgeld)' : ''}</p>
+    <p style="margin:12px 0"><button class="knopf" id="verw-neu">+ Neu</button></p>
+    <div class="konten">${v.zeilen.map((r, i) => `<button class="konto" data-verw-zeile="${i}" style="width:100%;text-align:left"><span class="dot" style="background:${/beendet|geschlossen/.test(r.status || '') || r.aktiv === 'Nein' ? 'var(--muted)' : 'var(--gem)'}"></span>
+      <div><div class="name">${h(v.name(r) || '–')}</div><div class="sub">${h(v.sub(r) || '')}</div></div><span>›</span></button>`).join('') || '<p class="leer">Noch keine Einträge.</p>'}</div>
+    ${z.verwMeldung ? `<div class="hinweis info" style="margin-top:12px">${h(z.verwMeldung)}</div>` : ''}</section>`;
+}
+const BLAETTER_TEXT = Object.fromEntries(Object.entries(BLAETTER).map(([k, b]) => [k, b.text]));
+
+function verwaltungVerdrahten() {
+  document.querySelectorAll('[data-verw]').forEach((b) => (b.onclick = () => { z.seite = 'verwaltung'; z.verw = { blatt: b.dataset.verw }; z.verwMeldung = null; zeichnen(); scrollTo(0, 0); }));
+  if (z.seite !== 'verwaltung') return;
+  $('#verw-zurueck')?.addEventListener('click', () => { z.seite = null; z.verw = null; z.tab = 'mehr'; zeichnen(); });
+  const v = verwaltungsBlaetter().find((x) => x.blatt === z.verw?.blatt); if (!v) return;
+  $('#verw-neu')?.addEventListener('click', () => verwFormular(v, null));
+  document.querySelectorAll('[data-verw-zeile]').forEach((b) => (b.onclick = () => verwFormular(v, v.zeilen[+b.dataset.verwZeile])));
+}
+
+/** Auswahl für Felder, die auf andere Listen verweisen. */
+function verwAuswahl(v, key, s) {
+  const m = z.d[v.datei].m;
+  if (s.liste) { const F = LISTEN[s.liste]; if (F) return F; }
+  if (key === 'konto' || key === 'von' || key === 'nach') return [...new Set([...(z.d.gemeinsam?.m.konten || []), ...(z.d.tagesgeld?.m.konten || []), ...(z.d[privat()]?.m.konten || [])].filter((k) => z.bereich === 'gemeinsam' || z.d[privat()].m.konten.includes(k)).map((k) => k.name))];
+  if (key === 'kategorie') return kategorienListe();
+  if (key === 'topf') return (z.bereich === 'gemeinsam' ? z.d.tagesgeld?.m.toepfe || [] : m.toepfe || []).map((t) => t.name);
+  if (key === 'posten' && v.blatt === 'Regeln') return null;
+  return null;
+}
+
+function verwFormular(v, r, fehler, werte) {
+  const sps = verwSpalten(v.blatt).filter((s) => s.typ !== 'f');
+  const neu = !r; const w = werte || { ...(r || {}) };
+  const zeig = (x, typ) => (x == null ? '' : typ === 'z' || typ === 'n' ? String(x).replace('.', ',') : String(x));
+  const feld = (s) => {
+    const fest = !neu && v.fest.includes(s.key);
+    const auto = neu && v.fest.includes(s.key) && v.id && s.key === v.fest[0];
+    if (auto) return '';
+    const wert = zeig(w[s.key], s.typ);
+    const aus = verwAuswahl(v, s.key, s);
+    const attr = `name="${s.key}" ${fest ? 'disabled' : ''}`;
+    let input;
+    if (aus && (s.liste || s.typ === 'j')) input = `<select ${attr}><option value="">–</option>${aus.map((o) => `<option ${o === wert ? 'selected' : ''}>${h(o)}</option>`).join('')}</select>`;
+    else if (s.typ === 'd') input = `<input type="date" ${attr} value="${h(wert)}">`;
+    else if (s.typ === 'm') input = `<input type="month" ${attr} value="${h(wert)}">`;
+    else if (s.typ === 'z' || s.typ === 'n') input = `<input inputmode="decimal" ${attr} value="${h(wert)}">`;
+    else input = `<input ${attr} value="${h(wert)}" ${aus ? `list="vl-${s.key}"` : ''}>${aus ? `<datalist id="vl-${s.key}">${aus.map((o) => `<option value="${h(o)}">`).join('')}</datalist>` : ''}`;
+    return `<label class="feld"><span>${h(s.name)}${fest ? ' (fest)' : ''}</span>${input}</label>`;
+  };
+  const dlg = dialog();
+  dlg.innerHTML = `<h2>${neu ? 'Neu: ' : ''}${h(v.titel)}${neu ? '' : ' – ' + h(v.name(r) || '')}</h2>
+    ${fehler ? `<div class="hinweis warn">${h(fehler)}</div>` : ''}
+    ${!neu && v.fest.length ? `<p class="hint">Namen, auf die Buchungen verweisen, bleiben fest. ${v.blatt === 'Konten' ? 'Nicht mehr genutzt? Status „geschlossen“.' : v.blatt === 'Kategorien' ? 'Nicht mehr gebraucht? Aktiv „Nein“.' : /Kosten|Einnahmen/.test(v.blatt) ? 'Fällt weg? Status „beendet“ oder „Bis (Monat)“ setzen.' : v.blatt === 'Töpfe' ? 'Nicht mehr gebraucht? „Bis (Monat)“ setzen.' : ''}</p>` : ''}
+    <form id="verw-form" class="editor-felder" novalidate>${sps.map(feld).join('')}</form>
+    <div class="knoepfe">${!neu && v.loeschen ? '<button class="knopf leise" id="verw-loeschen">Löschen</button>' : ''}<button class="knopf leise" id="verw-nein">Abbrechen</button><button class="knopf" id="verw-ok">Speichern</button></div>`;
+  if (!dlg.open) dlg.showModal();
+  $('#verw-nein', dlg).onclick = () => dlg.close();
+  const lesen = () => {
+    const f = $('#verw-form', dlg); const o = { ...(r || {}) };
+    for (const s of sps) {
+      const el = f.elements[s.key]; if (!el || el.disabled) continue;
+      const x = el.value.trim();
+      o[s.key] = x === '' ? null : s.typ === 'z' || s.typ === 'n' ? Number(x.replace(/\./g, '').replace(',', '.')) : x;
+    }
+    return o;
+  };
+  $('#verw-ok', dlg).onclick = () => {
+    const o = lesen();
+    const pflicht = v.fest.find((k) => k !== 'id' && k !== 'nr') || { Limits: 'kategorie', Regeln: 'stichwort', 'Soll-Überweisungen': 'monat', Erinnerungen: 'text' }[v.blatt];
+    if (pflicht && !o[pflicht]) return verwFormular(v, r, `Bitte „${sps.find((s) => s.key === pflicht)?.name}“ ausfüllen.`, o);
+    const zahlFalsch = sps.find((s) => (s.typ === 'z' || s.typ === 'n') && o[s.key] != null && !isFinite(o[s.key]));
+    if (zahlFalsch) return verwFormular(v, r, `„${zahlFalsch.name}“ ist keine Zahl.`, o);
+    if (neu && pflicht && v.fest.includes(pflicht) && v.zeilen.some((x) => String(x[pflicht] || '').toLowerCase() === String(o[pflicht]).toLowerCase())) return verwFormular(v, r, `„${o[pflicht]}“ gibt es schon.`, o);
+    if (neu && v.id) {
+      const key = v.fest[0];
+      if (v.id === '#') o[key] = Math.max(0, ...v.zeilen.map((x) => Number(x[key]) || 0)) + 1;
+      else { const max = Math.max(0, ...v.zeilen.map((x) => Number(String(x[key] || '').replace(/\D/g, '')) || 0)); o[key] = v.id + String(max + 1).padStart(v.id === 'KT' ? 2 : 3, '0'); }
+    }
+    if (neu && v.blatt === 'Kategorien') { o.aktiv ||= 'Ja'; o.angelegt ||= z.person; }
+    if (neu && v.blatt === 'Regeln') o.angelegt ||= heute();
+    dlg.close();
+    speichern(`${v.titel}: wird gespeichert …`, async () => {
+      const ziele = v.ueberall && neu ? (z.bereich === 'gemeinsam' ? ['gemeinsam', 'tagesgeld', privat()] : [privat(), 'gemeinsam', 'tagesgeld']).filter((d) => z.d[d]) : [v.datei];
+      for (const d of ziele) {
+        if (d !== v.datei && (z.d[d].m[v.feld] || []).some((x) => String(x.name || '').toLowerCase() === String(o.name || '').toLowerCase())) continue;
+        const eTag = z.d[d].eTag;
+        if (neu) await D.zeileNeu(z.d[d].ort, v.blatt, o);
+        else await D.zeileAendern(z.d[d].ort, v.blatt, r._zeile, D.ersteSpalte(v.blatt, r), o);
+        await neuLaden(d, eTag);
+      }
+      z.verwMeldung = `${v.name(o) || v.titel} gespeichert${ziele.length > 1 ? ` (in ${ziele.length} Dateien)` : ''}.`;
+    });
+  };
+  $('#verw-loeschen', dlg)?.addEventListener('click', async () => {
+    dlg.close();
+    if (!(await frage(`„${v.name(r)}“ wirklich löschen?`, 'Löschen'))) return;
+    speichern(`${v.titel}: wird gelöscht …`, async () => {
+      const eTag = z.d[v.datei].eTag;
+      await D.zeileLeeren(z.d[v.datei].ort, v.blatt, r._zeile, D.ersteSpalte(v.blatt, r));
+      await neuLaden(v.datei, eTag);
+      z.verwMeldung = `${v.name(r)} gelöscht.`;
+    });
+  });
 }
