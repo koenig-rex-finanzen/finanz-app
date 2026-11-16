@@ -4,6 +4,7 @@ import * as ms from './anmeldung.js';
 import * as od from './onedrive.js';
 import * as D from './datei.js';
 import * as E from './kern/einheit.js';
+import * as KAI from './kern/kai.js';
 import { FUNKTIONEN, WIDGETS_START, VORHER_AKTIV, LISTEN, SPARPLAN, BLAETTER, spalten as verwSpalten } from './kern/format.js';
 import { CONFIG } from './config.js';
 import * as hilfe from './hilfe.js';
@@ -147,7 +148,8 @@ async function neuLaden(b, alterETag) {
 
 const einst = () => haupt()?.m.einstellungen || {};
 const funktionenAn = () => new Set(String(einst().Funktionen || '').split(',').map((s) => s.trim()).filter(Boolean));
-const fuerBereich = (id) => !FUNKTIONEN[id].bereiche || FUNKTIONEN[id].bereiche.includes(art());
+const abgekoppelt = (d = privat()) => z.d[d]?.m.einstellungen?.Abgekoppelt === 'Ja';
+const fuerBereich = (id) => (!FUNKTIONEN[id].bereiche || FUNKTIONEN[id].bereiche.includes(art())) && !(id === 'soll-ueberweisung' && z.bereich !== 'gemeinsam' && abgekoppelt());
 const widgetsReihe = () => {
   const an = funktionenAn();
   const reihe = String(einst().Widgets || (WIDGETS_START[art()] || []).join(',')).split(',').map((s) => s.trim()).filter(Boolean);
@@ -187,7 +189,7 @@ function zeichnen() {
   document.body.dataset.bereich = document.documentElement.dataset.bereich = z.bereich === 'gemeinsam' ? 'gemeinsam' : FARBE[privat()];
   const a = ansicht();
   const inhalt = !a ? (z.laedt ? '<p class="leer">Wird geladen … (das kann bei langsamem OneDrive etwas dauern)</p>' : z.fehler ? '' : '<p class="leer">Noch nichts geladen.</p>')
-    : z.seite === 'verwaltung' ? verwaltungSeite() : z.seite === 'import' ? importSeite() : z.seite === 'kontostand-pruefen' ? kontostandSeite() : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
+    : z.seite === 'verwaltung' ? verwaltungSeite() : z.seite === 'ausgaben' ? ausgabenSeite() : z.seite === 'depot' ? depotSeite() : z.seite === 'challenges' ? challengeSeite() : z.seite === 'ruhmeshalle' ? ruhmSeite() : z.seite === 'import' ? importSeite() : z.seite === 'kontostand-pruefen' ? kontostandSeite() : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
       : z.tab === 'toepfe' ? (z.topf ? topfSeite(a) : toepfeSeite(a)) : mehrSeite();
   $('#app').innerHTML = `${kopf()}<main class="wrap einheit ${z.bereich === 'gemeinsam' ? '' : privat() === 'kai' ? 'kai' : 'meins'}">
     ${z.beispiel ? '<div class="hinweis info">Beispielmodus mit erfundenen Daten.</div>' : ''}
@@ -356,6 +358,10 @@ function mehrSeite() {
       <div class="kacheln" style="margin-bottom:12px">${verwaltungsBlaetter().map((v) => `<button class="kachel" data-verw="${h(v.blatt)}">${h(v.titel)}<div class="hint" style="font-weight:400">${v.zeilen.length} Einträge</div></button>`).join('')}</div>
       <p class="hint">Oder direkt in Excel:</p>
       <div class="konten">${dateien.map(([b, n]) => `<a class="konto" href="${h(z.d[b].webUrl)}" target="_blank" rel="noopener"><span></span><div><div class="name">${n}</div><div class="sub">Excel-Datei öffnen</div></div><span>›</span></a>`).join('')}</div></section>
+    ${z.bereich !== 'gemeinsam' ? `<section><h2>${abgekoppelt() ? 'Bereich ist abgekoppelt' : 'Bereich abkoppeln'}</h2>
+      <p class="hint">${abgekoppelt() ? 'Deine Datei ist unabhängig: Neue gemeinsame Kategorien kommen nicht mehr hinein, „Überweisung an Gemeinsam“ ist aus. Deine Buchungen bleiben, wie sie sind.'
+        : 'Macht deine Datei unabhängig von der gemeinsamen: keine gemeinsamen Kategorien mehr, keine Überweisung an Gemeinsam. Deine Buchungen bleiben. Vorher wird eine Sicherung angelegt; du musst dreimal bestätigen.'}</p>
+      <p style="margin-top:12px"><button class="knopf leise" id="${abgekoppelt() ? 'ankoppeln' : 'abkoppeln'}">${abgekoppelt() ? 'Wieder ankoppeln' : 'Abkoppeln …'}</button></p></section>` : ''}
     <section><h2>Darstellung</h2><div class="seg" role="radiogroup">${[['auto', 'Automatisch'], ['hell', 'Hell'], ['dunkel', 'Dunkel']].map(([w, n]) => `<label><input type="radio" name="thema" value="${w}" ${thema === w ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div></section>
     <section><h2>App</h2><p class="hint">Version ${VERSION}${z.test ? ' · Testbetrieb' : ''} · angemeldet als ${h(z.person || '')}</p>
       <p style="margin-top:12px"><button class="knopf leise" id="abmelden">Abmelden</button></p></section>`;
@@ -382,13 +388,15 @@ function verdrahten() {
   document.querySelectorAll('[data-loeschen]').forEach((b) => (b.onclick = () => { const [d, nr] = b.dataset.loeschen.split('|'); loeschen(d, nr); }));
   document.querySelectorAll('[data-topf]').forEach((b) => (b.onclick = () => { z.topf = b.dataset.topf; zeichnen(); scrollTo(0, 0); }));
   $('#topf-zurueck')?.addEventListener('click', () => { z.topf = null; zeichnen(); });
-  document.querySelectorAll('[data-seite]').forEach((b) => (b.onclick = () => { if (['import', 'kontostand-pruefen'].includes(b.dataset.seite)) { z.seite = b.dataset.seite; zeichnen(); scrollTo(0, 0); } else extraSeite(b.dataset.seite); }));
-  importVerdrahten(); kontostandVerdrahten(); verwaltungVerdrahten();
+  document.querySelectorAll('[data-seite]').forEach((b) => (b.onclick = () => { if (['import', 'kontostand-pruefen', 'ausgaben', 'depot', 'challenges', 'ruhmeshalle'].includes(b.dataset.seite)) { z.seite = b.dataset.seite; zeichnen(); scrollTo(0, 0); } else extraSeite(b.dataset.seite); }));
+  importVerdrahten(); kontostandVerdrahten(); verwaltungVerdrahten(); extrasVerdrahten();
   document.querySelectorAll('[data-funktion]').forEach((c) => (c.onchange = () => funktionSetzen(c.dataset.funktion, c.checked)));
   $('#wie-vorher')?.addEventListener('click', wieVorher);
   document.querySelectorAll('[data-hoch]').forEach((b) => (b.onclick = () => widgetSchieben(+b.dataset.hoch, -1)));
   document.querySelectorAll('[data-runter]').forEach((b) => (b.onclick = () => widgetSchieben(+b.dataset.runter, 1)));
   document.querySelectorAll('input[name=thema]').forEach((r) => (r.onchange = () => { try { localStorage.setItem('ug.thema', r.value); } catch {} themaSetzen(); }));
+  $('#abkoppeln')?.addEventListener('click', abkoppeln);
+  $('#ankoppeln')?.addEventListener('click', () => speichern('Wird wieder angekoppelt …', async () => { const d = privat(); const eTag = z.d[d].eTag; await D.einstellungSetzen(z.d[d].ort, 'Abgekoppelt', 'Nein', 'Ja = Bereich unabhängig von Gemeinsam'); await neuLaden(d, eTag); }));
   $('#abmelden')?.addEventListener('click', () => { ms.abmelden(); try { localStorage.removeItem('ug.neu.aktiv'); localStorage.removeItem('ug.neu.person'); caches.delete(SPEICHER); } catch {} location.reload(); });
 }
 
@@ -901,7 +909,7 @@ function verwFormular(v, r, fehler, werte) {
     speichern(`${v.titel}: wird gespeichert …`, async () => {
       const ziele = v.ueberall && neu ? (z.bereich === 'gemeinsam' ? ['gemeinsam', 'tagesgeld', privat()] : [privat(), 'gemeinsam', 'tagesgeld']).filter((d) => z.d[d]) : [v.datei];
       for (const d of ziele) {
-        if (d !== v.datei && (z.d[d].m[v.feld] || []).some((x) => String(x.name || '').toLowerCase() === String(o.name || '').toLowerCase())) continue;
+        if (d !== v.datei && ((z.d[d].m[v.feld] || []).some((x) => String(x.name || '').toLowerCase() === String(o.name || '').toLowerCase()) || abgekoppelt(d))) continue;
         const eTag = z.d[d].eTag;
         if (neu) await D.zeileNeu(z.d[d].ort, v.blatt, o);
         else await D.zeileAendern(z.d[d].ort, v.blatt, r._zeile, D.ersteSpalte(v.blatt, r), o);
@@ -919,5 +927,97 @@ function verwFormular(v, r, fehler, werte) {
       await neuLaden(v.datei, eTag);
       z.verwMeldung = `${v.name(r)} gelöscht.`;
     });
+  });
+}
+
+// ---------------------------------------------------------------- Weitere Extras: Ausgaben, Depot, Challenges, Ruhmeshalle
+const zurueckKnopf = '<button class="link" data-extra-zurueck>‹ Übersicht</button>';
+function extrasVerdrahten() {
+  document.querySelectorAll('[data-extra-zurueck]').forEach((b) => (b.onclick = () => { z.seite = null; zeichnen(); }));
+  $('#tr-datei')?.addEventListener('change', (ev) => trImport([...ev.target.files]));
+  document.querySelectorAll('[data-ausg-monate]').forEach((b) => (b.onclick = () => { z.ausgMonate = +b.dataset.ausgMonate; zeichnen(); }));
+}
+
+/** Ausgaben je Kategorie über die letzten Monate (ohne Ausgleichs-Buchungen). Nur zeigen, nicht bewerten. */
+function ausgabenSeite() {
+  const m = haupt().m; const n = z.ausgMonate || 6;
+  const monate = Array.from({ length: n }, (_, i) => { const d = new Date(Date.UTC(+z.monat.slice(0, 4), +z.monat.slice(5, 7) - 1 - (n - 1 - i), 1)); return d.toISOString().slice(0, 7); });
+  const l = E.ausgabenVerlauf(m, monate);
+  const max = Math.max(1, ...l.flatMap((x) => x.werte));
+  const summeMonat = monate.map((_, i) => E.r2(l.reduce((a, x) => a + x.werte[i], 0)));
+  return `<section>${zurueckKnopf}<h2>Ausgaben</h2><p class="hint">Ausgaben je Kategorie, ${monatsname(monate[0], true)} bis ${monatsname(monate.at(-1), true)} (nach „Gilt für“).</p>
+    <div class="seg" style="margin:10px 0">${[3, 6, 12].map((x) => `<label><input type="radio" name="ausg" data-ausg-monate="${x}" ${x === n ? 'checked' : ''}><span>${x} Monate</span></label>`).join('')}</div>
+    <div class="konten"><div class="konto"><span></span><div><div class="name">Zusammen</div><div class="sub">${monate.map((mo, i) => `${MONATE[+mo.slice(5) - 1].slice(0, 3)} ${eur(summeMonat[i])}`).join(' · ')}</div></div><div class="betrag">${eur(E.r2(summeMonat.reduce((a, b) => a + b, 0)))}</div></div>
+    ${l.map((x) => `<div class="konto"><span class="dot" style="background:var(--gem)"></span><div style="min-width:0"><div class="name">${h(x.kategorie)}</div>
+      <div class="ausg-balken">${x.werte.map((w, i) => `<span title="${monatsname(monate[i], true)}: ${eur(w)}" style="height:${Math.round((w / max) * 100)}%"></span>`).join('')}</div>
+      <div class="sub">Schnitt ${eur(x.schnitt)} im Monat</div></div><div class="betrag">${eur(x.summe)}</div></div>`).join('') || '<p class="leer">Keine Ausgaben in diesem Zeitraum.</p>'}</div></section>`;
+}
+
+/** Depot aus dem Blatt „TR Buchungen“ (Stück, Einstand, Dividenden, Ein-/Auszahlungen). Kurse und Wert stehen im Blatt „Depot“ in Excel. */
+function depotSeite() {
+  const m = haupt().m;
+  if (!m.blaetter?.includes('TR Buchungen')) return `<section>${zurueckKnopf}<h2>Depot</h2><p class="hint">In dieser Datei gibt es kein Depot.</p></section>`;
+  const tr = m.tr || [];
+  const positionen = [...new Map(tr.filter((t) => t.position).map((t) => [t.position, { position: t.position, name: t.name }])).values()];
+  return `<section>${zurueckKnopf}<h2>Depot</h2>
+    <p class="hint">Aus dem Trade-Republic-Export (Blatt „TR Buchungen“, ${tr.length} Zeilen${tr.length ? ', bis ' + datumKurz(tr.reduce((x, t) => (t.datum > x ? t.datum : x), '')) : ''}). Aktuelle Kurse und Wert stehen im Blatt „Depot“.</p>
+    <p style="margin:12px 0"><label class="knopf"><input type="file" id="tr-datei" accept=".csv,.xlsx,text/csv" hidden>TR-Export importieren</label></p>
+    ${z.trMeldung ? `<div class="hinweis info">${h(z.trMeldung)}</div>` : ''}
+    ${depotInhalt(tr, positionen)}</section>`;
+}
+function depotInhalt(tr, positionen) {
+  if (!tr.length) return '';
+  const d = KAI.depot({ tr, depot: positionen });
+  return `<div class="konten">${[['Eingezahlt', d.eingezahlt], ['Ausgezahlt', d.ausgezahlt], ['Eingesetzt (offene Positionen)', d.eingesetzt], ['Dividenden', d.dividenden], ['Realisiert', d.realisiert], ['Bargeld im Depot', d.bargeld]]
+    .map(([n, w]) => `<div class="konto"><span></span><div><div class="name">${n}</div></div><div class="betrag">${eur(w)}</div></div>`).join('')}</div>
+    <h3>Positionen (${d.offen} offen)</h3><div class="konten">${d.positionen.filter((p) => p.stueck > 1e-9).map((p) => `<div class="konto"><span class="dot" style="background:var(--gem)"></span>
+      <div><div class="name">${h(p.name || p.position)}</div><div class="sub">${String(p.stueck).replace('.', ',')} Stück${p.letzterKurs != null ? ` · letzter Kurs ${eur(p.letzterKurs)} (${datumKurz(p.letzterKursAm)})` : ''}</div></div><div class="betrag">${eur(p.einstand)}</div></div>`).join('')}</div>`;
+}
+async function trImport(dateien) {
+  const f = dateien[0]; if (!f) return;
+  const d = z.bereich === 'gemeinsam' ? null : privat(); if (!d) return;
+  speichern('TR-Export wird übernommen …', async () => {
+    const K2 = KAI; const { csvText } = await import('./kern/csv.js');
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    const text = /\.xlsx$/i.test(f.name) ? await K2.trTextAusXlsx(bytes) : csvText(bytes);
+    const m = z.d[d].m; const tr = m.tr || [];
+    const positionen = [...new Map(tr.filter((t) => t.position).map((t) => [t.position, { position: t.position }])).values()];
+    const r = K2.trNeu(K2.leseTr(text), { tr, depot: positionen });
+    const iId = verwSpalten('TR Buchungen').findIndex((s) => s.key === 'id');
+    const eTag = z.d[d].eTag;
+    const n = r.neu.length ? await D.zeilenAnhaengen(z.d[d].ort, 'TR Buchungen', r.neu, { doppelt: (row, o) => String(row[iId]) === String(o.id) }) : 0;
+    if (n) await neuLaden(d, eTag);
+    z.trMeldung = `${n} neue Zeile${n === 1 ? '' : 'n'} übernommen${r.unbekannt.length ? `, ${r.unbekannt.length} mit unbekanntem Typ übersprungen` : ''}${r.positionenNeu.length ? `. Neue Positionen: ${r.positionenNeu.map((p) => p.name).join(', ')} – im Blatt „Depot“ ergänzen, damit Kurs und Wert erscheinen` : ''}.`;
+  });
+}
+
+/** Challenges und Ruhmeshalle (Natalie): ansehen; Neues anlegen kommt über „Mehr › Verwaltung“ bzw. Excel. */
+function challengeSeite() {
+  const l = haupt().m.challenges || [];
+  const H = heute();
+  return `<section>${zurueckKnopf}<h2>Challenges</h2>${l.length ? `<div class="konten">${l.map((c) => {
+    const lauf = c.start && c.ende ? Math.max(0, Math.min(1, (Date.parse(H) - Date.parse(c.start)) / Math.max(1, Date.parse(c.ende) - Date.parse(c.start)))) : null;
+    return `<div class="konto"><span class="dot" style="background:${c.status === 'geschafft' ? 'var(--gem)' : 'var(--warn)'}"></span><div style="min-width:0"><div class="name">${h(c.titel || c.art)}</div>
+      <div class="sub">${c.start ? datumKurz(c.start) + c.start.slice(0, 4) : ''}${c.ende ? ' – ' + datumKurz(c.ende) + c.ende.slice(0, 4) : ''}${c.status ? ' · ' + h(c.status) : ''}</div>
+      ${lauf != null && c.status !== 'geschafft' ? `<div class="bar"><span style="width:${Math.round(lauf * 100)}%"></span></div>` : ''}</div><div></div></div>`;
+  }).join('')}</div>` : '<p class="leer">Noch keine Challenges.</p>'}</section>`;
+}
+function ruhmSeite() {
+  const l = [...(haupt().m.ruhm || [])].sort((a, b) => String(b.datum || '').localeCompare(String(a.datum || '')));
+  return `<section>${zurueckKnopf}<h2>Ruhmeshalle</h2>${l.length ? `<div class="konten">${l.map((r) => `<div class="konto"><span class="dot" style="background:var(--gem)"></span>
+    <div><div class="name">🏅 ${h(r.auszeichnung || '')}</div><div class="sub">${r.datum ? datumKurz(r.datum) + r.datum.slice(0, 4) + ' · ' : ''}${h(r.challenge || '')}${r.text ? ' · ' + h(r.text) : ''}</div></div><div></div></div>`).join('')}</div>` : '<p class="leer">Noch keine Auszeichnungen.</p>'}</section>`;
+}
+
+// ---------------------------------------------------------------- Abkoppeln (eigene Datei unabhängig von Gemeinsam)
+async function abkoppeln() {
+  const d = privat();
+  if (!(await frage('Deinen Bereich wirklich abkoppeln? Neue gemeinsame Kategorien kommen dann nicht mehr in deine Datei, „Überweisung an Gemeinsam“ wird ausgeschaltet.', 'Weiter'))) return;
+  if (!(await frage('Vorher wird eine Sicherung deiner Datei angelegt. Deine Buchungen bleiben unverändert. Weiter?', 'Weiter'))) return;
+  if (!(await frage('Letzte Bestätigung: Jetzt abkoppeln?', 'Abkoppeln'))) return;
+  speichern('Sicherung und Abkoppeln …', async () => {
+    const eTag = z.d[d].eTag;
+    await D.sicherungAnlegen(z.d[d].ort, 'vor-Abkoppeln');
+    await D.einstellungSetzen(z.d[d].ort, 'Abgekoppelt', 'Ja', 'Ja = Bereich unabhängig von Gemeinsam');
+    await neuLaden(d, eTag);
   });
 }

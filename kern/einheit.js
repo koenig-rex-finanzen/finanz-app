@@ -59,7 +59,7 @@ export async function leseDatei(daten) {
   return {
     bereich: einst.Bereich || null, einstellungen: einst,
     aufteilung: mappe.blaetter.has('Aufteilung') ? leseRaster(mappe.blaetter.get('Aufteilung')) : {},
-    erinnerungen: zus('Erinnerungen'), offenePunkte: zus('Offene Punkte'),
+    erinnerungen: zus('Erinnerungen'), offenePunkte: zus('Offene Punkte'), tr: zus('TR Buchungen'), challenges: zus('Challenges'), ruhm: zus('Ruhmeshalle'),
     konten: t('Konten'), buchungen: t('Buchungen'), kontostaende: t('Kontostände'), kosten: t('Kosten'), einnahmen: t('Einnahmen'),
     toepfe: t('Töpfe'), limits: t('Limits'), soll: t('Soll-Überweisungen'), kategorien: t('Kategorien'), regeln: t('Regeln'),
     excel: { monat: isoAus(ue?.get('C4'))?.slice(0, 7) || null },
@@ -127,6 +127,7 @@ export function offen(m, p, monat, art, karte = true) {
 }
 /** Soll-Überweisungen eines Monats: Wirkung aufs Freie (+ kommt rein, − geht raus). */
 export function sollOffen(m, monat) {
+  if (m.einstellungen?.Abgekoppelt === 'Ja' && m.bereich !== 'gemeinsam') return 0; // abgekoppelter Bereich: keine Überweisungen an Gemeinsam mehr
   return summe(m.soll.filter((s) => s.monat === monat), (s) => {
     const ist = summe(m.buchungen.filter((b) => b.von === s.von && b.nach === s.nach && b.giltFuer === monat), (b) => b.betrag);
     const rest = Math.max(0, (s.soll || 0) - ist);
@@ -254,6 +255,14 @@ export function kategorienMonat(m, monat) {
     const k = b.kategorie || 'Ohne Kategorie'; map.set(k, r2((map.get(k) || 0) + b.betrag));
   }
   return [...map].map(([kategorie, betrag]) => ({ kategorie, betrag })).sort((a, b) => b.betrag - a.betrag);
+}
+
+/** Ausgaben je Kategorie über mehrere Monate (für die Seite „Ausgaben“): [{kategorie, werte: [je Monat], summe, schnitt}] */
+export function ausgabenVerlauf(m, monate) {
+  const map = new Map();
+  for (const [i, mo] of monate.entries()) for (const x of kategorienMonat(m, mo)) { const w = map.get(x.kategorie) || monate.map(() => 0); w[i] = x.betrag; map.set(x.kategorie, w); }
+  return [...map].map(([kategorie, werte]) => ({ kategorie, werte, summe: r2(werte.reduce((a, b) => a + b, 0)), schnitt: r2(werte.reduce((a, b) => a + b, 0) / monate.length) }))
+    .sort((a, b) => b.summe - a.summe);
 }
 
 /** Buchungen eines Topfs mit Wirkung und Stand danach (alt → neu). Rechnet wie toepfeStand. */

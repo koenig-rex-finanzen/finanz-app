@@ -782,3 +782,5 @@ body.einheit .kst-zeile{display:grid;grid-template-columns:1fr 1fr;gap:10px;marg
 body.einheit .kst-zeile .feld input{width:100%}
 body.einheit .imp-regel{flex-basis:100%;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
 body.einheit .imp-regel input{width:18px;height:18px;flex:none;accent-color:var(--gem)}
+body.einheit .ausg-balken{display:flex;align-items:flex-end;gap:3px;height:34px;margin:6px 0 2px}
+body.einheit .ausg-balken span{flex:1;min-height:2px;background:var(--gem);border-radius:3px 3px 0 0;opacity:.8}

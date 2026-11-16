@@ -233,6 +233,21 @@ export function gleicheBuchung(b) {
     && String(r[sp.nach]) === b.nach && Math.abs(Number(r[sp.betrag]) - Number(b.betrag)) < 0.005;
 }
 
+/** Mehrere Zeilen ans Ende eines Blatts (freie Zeilen, eine Sitzung). doppelt(row) → true = schon da, wird übersprungen. */
+export function zeilenAnhaengen(ort, blatt, liste, { doppelt } = {}) {
+  return mitSitzung(ort, async (api) => {
+    const { erste, letzte } = await tabellenGrenzen(api, blatt);
+    const sps = spalten(blatt);
+    const v = (await api.lies(blatt, `A${erste}:${sps.at(-1).buchst}${letzte}`)).values;
+    const neu = doppelt ? liste.filter((o) => !v.some((r) => doppelt(r, o))) : liste;
+    const belegt = (r) => sps.some((s, j) => s.typ !== 'f' && r[j] !== '' && r[j] != null);
+    const freie = v.map((r, j) => (belegt(r) ? -1 : j)).filter((j) => j >= 0);
+    if (freie.length < neu.length) throw new Error(`Im Blatt „${blatt}“ ist nicht genug Platz (${freie.length} frei, ${neu.length} nötig). Bitte die Tabelle in Excel verlängern.`);
+    for (const [k, o] of neu.entries()) await zeileSchreiben(api, blatt, erste + freie[k], zeilenWerte(blatt, o));
+    return neu.length;
+  });
+}
+
 /** Wert der ersten Spalte, wie er in Excel steht (für die Prüfung beim Ändern/Löschen). */
 export const ersteSpalte = (blatt, obj) => zeilenWerte(blatt, obj)[0];
 
