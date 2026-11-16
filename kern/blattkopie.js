@@ -1,3 +1,4 @@
+import { entpackeRoh } from './xlsx.js';
 // Übernimmt Blätter unverändert aus einer alten .xlsx (Formeln, Formatierung, Diagramme, Tabellen, Auswahllisten).
 // Für die Zusatzblätter beim Umzug: Gemeinsam (Aufteilung, Überweisung, Kredite, Jahr) und Kai (Depot).
 // Formeln können dabei umgeschrieben werden (z. B. neue Spaltenbuchstaben).
@@ -18,7 +19,7 @@ export async function entpacken(bytes) {
     const name = td.decode(u.subarray(p + 46, p + 46 + nl));
     const lnl = dv.getUint16(off + 26, true), lel = dv.getUint16(off + 28, true);
     const daten = u.subarray(off + 30 + lnl + lel, off + 30 + lnl + lel + csz);
-    const roh = meth === 0 ? daten : new Uint8Array(await new Response(new Blob([daten]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+    const roh = meth === 0 ? daten : await entpackeRoh(daten);
     out[name] = td.decode(roh);
     p += 46 + nl + el + cl;
   }
