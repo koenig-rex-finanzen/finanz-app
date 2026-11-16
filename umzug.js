@@ -19,7 +19,7 @@ export function seite() {
   document.body.dataset.bereich = 'gemeinsam';
   $('#app').innerHTML = `<main class="wrap einheit"><section><h2>Umzug in die neuen Dateien</h2>
     <p class="hint">Baut aus den aktuellen Dateien die vier neuen (Gemeinsam, Tagesgeld, Kai, Natalie). Vorher wird alles gesichert. Die alten Dateien bleiben unverändert als Archiv.</p>
-    <div class="zwei"><label class="feld"><span>Endung c24 Haushalt</span><input id="u-e1" inputmode="numeric" maxlength="4"></label><label class="feld"><span>Endung c24 Fixkosten</span><input id="u-e2" inputmode="numeric" maxlength="4"></label></div>
+    <div class="zwei"><label class="feld"><span>Endung c24 Haushalt</span><input id="u-e1" inputmode="numeric" maxlength="4"></label><label class="feld"><span>Endung c24 Laufende Kosten</span><input id="u-e2" inputmode="numeric" maxlength="4"></label></div>
     <label class="feld"><span>Korrekturen (JSON, optional)</span><input id="u-korr" placeholder='{"K004":{"faellig":1,"tag":15}}'></label>
     <p style="margin-top:12px"><button class="knopf" id="u-probe">Probelauf (Testordner)</button></p>
     <ol id="u-log" class="offen-liste"></ol><div id="u-ergebnis"></div></section></main>`;
@@ -31,7 +31,7 @@ function parameter() {
   return {
     neueKonten: [
       { id: 'KT20', name: 'c24 Haushalt', bank: 'C24', art: 'Giro', inhaber: 'Natalie', endung: $('#u-e1').value.trim() || null, anfang: null, bemerkung: 'Hauptkonto mit Karte, ersetzt die Visa ab 01.01.2027' },
-      { id: 'KT21', name: 'c24 Fixkosten', bank: 'C24', art: 'Pocket', inhaber: 'Natalie', endung: $('#u-e2').value.trim() || null, anfang: null, bemerkung: 'Daueraufträge und Abbuchungen ab 01.01.2027' },
+      { id: 'KT21', name: 'c24 Laufende Kosten', bank: 'C24', art: 'Pocket', inhaber: 'Natalie', endung: $('#u-e2').value.trim() || null, anfang: null, bemerkung: 'Daueraufträge und Abbuchungen ab 01.01.2027' },
     ],
     kostenKorrektur: korr ? JSON.parse(korr) : {},
   };
