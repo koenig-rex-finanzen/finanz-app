@@ -186,6 +186,35 @@ export function importUebernehmen(ort, { neu = [], ergaenzen = [] }) {
   });
 }
 
+/**
+ * Buchung aufteilen (eine Excel-Sitzung): Die Original-Zeile behält den ersten Teil (Betrag, Kategorie),
+ * die weiteren Teile werden neue Zeilen mit Quelle „Aufteilung“ und Kommentar „Teil von <Nr>“.
+ * Prüft vorher Nummer und Betrag der Original-Zeile.
+ */
+export function aufteilen(ort, b, teile, nrn) {
+  return mitSitzung(ort, async (api) => {
+    const { erste, letzte } = await tabellenGrenzen(api, 'Buchungen');
+    const sps = spalten('Buchungen');
+    const i = (k) => sps.findIndex((s) => s.key === k);
+    const v = (await api.lies('Buchungen', `A${erste}:${sps.at(-1).buchst}${letzte}`)).values;
+    const r = b._zeile - erste;
+    if (String(v[r]?.[i('nr')]) !== b.nr || Math.abs(Number(v[r][i('betrag')]) - b.betrag) >= 0.005) throw new Error(`${b.nr} hat sich in der Datei geändert. Bitte neu laden.`);
+    const nrDa = new Set(v.map((x) => String(x[i('nr')] ?? '')));
+    if (nrn.some((n) => nrDa.has(n))) throw new Error('Die neuen Nummern sind inzwischen vergeben. Bitte neu laden.');
+    const [t1, ...rest] = teile;
+    await zeileSchreiben(api, 'Buchungen', b._zeile, zeilenWerte('Buchungen', { ...b, betrag: t1.betrag, kategorie: t1.kategorie || null }));
+    const belegt = (x) => sps.some((s, j) => s.typ !== 'f' && x[j] !== '' && x[j] != null);
+    const freie = v.map((x, j) => (belegt(x) ? -1 : j)).filter((j) => j >= 0);
+    if (freie.length < rest.length) throw new Error('Im Blatt „Buchungen“ ist nicht genug Platz. Bitte die Tabelle in Excel verlängern.');
+    for (const [k, t] of rest.entries()) {
+      const neu = { ...b, nr: nrn[k], betrag: t.betrag, kategorie: t.kategorie || null, posten: t.posten ?? null, quelle: 'Aufteilung', importId: null, gegenstueck: null, kommentar: `Teil von ${b.nr}` };
+      await zeileSchreiben(api, 'Buchungen', erste + freie[k], zeilenWerte('Buchungen', neu));
+    }
+    const a = (await api.lies('Buchungen', `A${erste}:A${letzte}`)).values.map((x) => String(x[0] ?? ''));
+    if (nrn.some((n) => !a.includes(n))) throw new Error('Die Aufteilung wurde nicht wie erwartet gespeichert. Bitte in Excel prüfen.');
+  });
+}
+
 /** Setzt einen Wert im Blatt „Einstellungen“ (legt den Schlüssel an, wenn es ihn noch nicht gibt). */
 export function einstellungSetzen(ort, schluessel, wert, erklaerung) {
   return mitSitzung(ort, async (api) => {

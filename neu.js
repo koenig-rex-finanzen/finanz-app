@@ -315,7 +315,7 @@ function buchungenSeite() {
         <div class="r">${datumKurz(b.datum)} · ${h(b.von)} → ${h(b.nach)}${b.kategorie ? ` · <span class="chip">${h(b.kategorie)}</span>` : ''}${b.topf ? ` · Topf ${h(b.topf)}` : ''}</div></div>
         <div class="betrag ${plus ? '' : 'neg'}">${plus ? '+' : b.art === 'Umbuchung' || /Topf/.test(b.art) ? '' : '−'}${eur(b.betrag)}</div></button>
         ${offen ? `<div class="bu-aktion"><dl class="more">${[['Nr', b.nr], ['Art', b.art], ['Gilt für', b.giltFuer && monatsname(b.giltFuer, true)], ['Kategorie', b.kategorie], ['Bank-Kategorie', b.bankKategorie], ['Posten', b.posten], ['Topf', b.topf], ['Beschreibung', b.beschreibung], ['Kommentar', b.kommentar], ['Gezahlt von', b.gezahltVon], ['Quelle', b.quelle], ['Gegenstück', b.gegenstueck]].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${h(v)}</dd>`).join('')}</dl>
-          <div class="knoepfe"><button class="knopf klein" data-aendern="${h(b._datei + '|' + b.nr)}">Bearbeiten</button><button class="knopf klein leise" data-loeschen="${h(b._datei + '|' + b.nr)}">Löschen</button></div></div>` : ''}</div>`;
+          <div class="knoepfe"><button class="knopf klein" data-aendern="${h(b._datei + '|' + b.nr)}">Bearbeiten</button>${b.art === 'Ausgabe' && !b.gegenstueck && !(b.quelle === 'Aufteilung') ? `<button class="knopf klein leise" data-aufteilen="${h(b._datei + '|' + b.nr)}">Aufteilen</button>` : ''}<button class="knopf klein leise" data-loeschen="${h(b._datei + '|' + b.nr)}">Löschen</button></div></div>` : ''}</div>`;
     }).join('')}</div>` : `<p class="leer">${q ? 'Nichts gefunden.' : `Keine Buchungen im ${monatsname(z.monat)}.`}</p>`}</section>`;
 }
 
@@ -376,6 +376,7 @@ function verdrahten() {
   const s = $('#suche'); if (s) s.oninput = () => { z.suche = s.value; const pos = s.selectionStart; zeichnen(); const n = $('#suche'); n.focus(); n.setSelectionRange(pos, pos); };
   document.querySelectorAll('[data-bu]').forEach((b) => (b.onclick = () => { const id = b.dataset.bu.replace('|', ''); z.offenNr = z.offenNr === id ? null : id; zeichnen(); }));
   document.querySelectorAll('[data-aendern]').forEach((b) => (b.onclick = () => { const [d, nr] = b.dataset.aendern.split('|'); formular(z.d[d].m.buchungen.find((x) => x.nr === nr), d); }));
+  document.querySelectorAll('[data-aufteilen]').forEach((b) => (b.onclick = () => { const [d, nr] = b.dataset.aufteilen.split('|'); aufteilenDialog(d, nr); }));
   document.querySelectorAll('[data-loeschen]').forEach((b) => (b.onclick = () => { const [d, nr] = b.dataset.loeschen.split('|'); loeschen(d, nr); }));
   document.querySelectorAll('[data-topf]').forEach((b) => (b.onclick = () => { z.topf = b.dataset.topf; zeichnen(); scrollTo(0, 0); }));
   $('#topf-zurueck')?.addEventListener('click', () => { z.topf = null; zeichnen(); });
@@ -749,4 +750,42 @@ function kontostandVerdrahten() {
       z.kst[i] = {}; z.kstMeldung = `${k.name}: Anfangsbestand ${eur(anfang)} ab ${datumKurz(stichtag)}${stichtag.slice(0, 4)} gespeichert.`;
     });
   }));
+}
+
+// ---------------------------------------------------------------- Aufteilen
+// Eine Ausgabe in mehrere Teile mit eigener Kategorie (z. B. Einkauf: Essen & Trinken + Drogerie). Summe muss gleich bleiben.
+function aufteilenDialog(d, nr, teileVorher, fehler) {
+  const b = z.d[d].m.buchungen.find((x) => x.nr === nr); if (!b) return;
+  const teile = teileVorher || [{ betrag: '', kategorie: b.kategorie || '' }, { betrag: '', kategorie: '' }];
+  const kat = [...new Set([b.kategorie, ...kategorienListe()].filter(Boolean))];
+  const dlg = dialog();
+  const zahl = (t) => Number(String(t.betrag).replace(/\./g, '').replace(',', '.'));
+  const summe = E.r2(teile.reduce((a, t) => a + (isFinite(zahl(t)) ? zahl(t) : 0), 0));
+  dlg.innerHTML = `<h2>${h(nr)} aufteilen</h2><p class="hint">${h(b.posten || b.beschreibung || b.nach)} · ${eur(b.betrag)} am ${datumKurz(b.datum)}${b.datum.slice(0, 4)}. Der erste Teil bleibt in der Buchung, die weiteren werden eigene Zeilen („Teil von ${h(nr)}“).</p>
+    ${fehler ? `<div class="hinweis warn">${h(fehler)}</div>` : ''}
+    <div class="konten" style="margin-top:10px">${teile.map((t, i) => `<div class="kst-zeile" style="margin:8px 12px"><label class="feld"><span>Teil ${i + 1}</span><input inputmode="decimal" data-tb="${i}" value="${h(t.betrag)}" placeholder="0,00"></label>
+      <label class="feld"><span>Kategorie</span><select data-tk="${i}"><option value="">–</option>${kat.map((k) => `<option ${k === t.kategorie ? 'selected' : ''}>${h(k)}</option>`).join('')}</select></label></div>`).join('')}</div>
+    <p class="hint" style="margin-top:8px">Summe der Teile: <b>${eur(summe)}</b> von ${eur(b.betrag)}${Math.abs(summe - b.betrag) < 0.005 ? ' ✓' : ` · es fehlen ${eur(E.r2(b.betrag - summe))}`}</p>
+    <div class="knoepfe"><button class="knopf leise" id="at-plus">+ Teil</button><button class="knopf leise" id="at-rest">Rest in Teil 1</button><button class="knopf leise" id="at-nein">Abbrechen</button><button class="knopf" id="at-ok">Aufteilen</button></div>`;
+  if (!dlg.open) dlg.showModal();
+  const lies = () => teile.map((t, i) => ({ betrag: $(`[data-tb="${i}"]`, dlg).value, kategorie: $(`[data-tk="${i}"]`, dlg).value }));
+  dlg.querySelectorAll('[data-tb]').forEach((x) => (x.onchange = () => aufteilenDialog(d, nr, lies())));
+  $('#at-plus', dlg).onclick = () => aufteilenDialog(d, nr, [...lies(), { betrag: '', kategorie: '' }]);
+  $('#at-rest', dlg).onclick = () => { const l = lies(); const rest = E.r2(b.betrag - l.slice(1).reduce((a, t) => a + (isFinite(zahl(t)) ? zahl(t) : 0), 0)); l[0].betrag = String(rest).replace('.', ','); aufteilenDialog(d, nr, l); };
+  $('#at-nein', dlg).onclick = () => dlg.close();
+  $('#at-ok', dlg).onclick = () => {
+    const l = lies().filter((t) => String(t.betrag).trim() !== '').map((t) => ({ ...t, betrag: zahl(t) }));
+    if (l.length < 2) return aufteilenDialog(d, nr, lies(), 'Bitte mindestens zwei Teile angeben.');
+    if (l.some((t) => !(t.betrag > 0))) return aufteilenDialog(d, nr, lies(), 'Jeder Teil braucht einen Betrag über 0.');
+    const s2 = E.r2(l.reduce((a, t) => a + t.betrag, 0));
+    if (Math.abs(s2 - b.betrag) >= 0.005) return aufteilenDialog(d, nr, lies(), `Die Teile ergeben ${eur(s2)}, die Buchung hat ${eur(b.betrag)}.`);
+    dlg.close();
+    speichern(`${nr} wird aufgeteilt …`, async () => {
+      const nrn = []; const alle = Object.values(bereichsDateien()).flatMap((m) => m.buchungen);
+      for (let k = 1; k < l.length; k++) nrn.push(E.neueNr({ buchungen: [...alle, ...nrn.map((x) => ({ nr: x }))] }));
+      const eTag = z.d[d].eTag;
+      await D.aufteilen(z.d[d].ort, b, l, nrn);
+      await neuLaden(d, eTag);
+    });
+  };
 }
