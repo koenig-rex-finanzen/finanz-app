@@ -443,6 +443,14 @@ function formular(alt, altDatei) {
   dlg.onclose = () => { dlg.onclose = null; if (dlg.returnValue !== 'ok') return; const daten = Object.fromEntries(new FormData(f)); buchungSpeichern(daten, alt, altDatei); };
 }
 
+/** Art aus Sicht einer Datei: In Gemeinsam bleibt die gewählte Art (Sicht des Haushalts), sonst zählt, welche Seite ein eigenes Konto der Datei ist. */
+function artFuerDatei(b, datei) {
+  if (datei === 'gemeinsam' || /Topf/.test(b.art)) return b.art;
+  const eigen = new Set(z.d[datei].m.konten.filter((k) => k.eigen === 'Ja').map((k) => k.name));
+  const v = eigen.has(b.von), n = eigen.has(b.nach);
+  return v && n ? 'Umbuchung' : n ? 'Einnahme' : v ? 'Ausgabe' : b.art;
+}
+
 function buchungAus(d) {
   const betrag = Number(String(d.betrag).replace(/\./g, '').replace(',', '.'));
   if (!(betrag > 0)) throw new Error('Bitte einen Betrag größer 0 eintragen.');
@@ -462,7 +470,7 @@ function buchungSpeichern(daten, alt, altDatei) {
       const zeilen = [[altDatei, alt]];
       if (alt.gegenstueck) { const [dn, nr] = alt.gegenstueck.split(' '); const dd = dn.toLowerCase(); const g = z.d[dd]?.m.buchungen.find((x) => x.nr === nr); if (g) zeilen.push([dd, g]); }
       for (const [dd, x] of zeilen) {
-        const neu = { ...x, ...b, nr: x.nr, quelle: x.quelle, importId: x.importId, gegenstueck: x.gegenstueck, bankKategorie: x.bankKategorie, topf: dd === 'gemeinsam' && z.d.tagesgeld ? null : b.topf };
+        const neu = { ...x, ...b, art: artFuerDatei(b, dd), nr: x.nr, quelle: x.quelle, importId: x.importId, gegenstueck: x.gegenstueck, bankKategorie: x.bankKategorie, topf: dd === 'gemeinsam' && z.d.tagesgeld ? null : b.topf };
         const eTag = z.d[dd].eTag; await D.zeileAendern(z.d[dd].ort, 'Buchungen', x._zeile, x.nr, neu); await neuLaden(dd, eTag);
       }
       return;
@@ -471,7 +479,7 @@ function buchungSpeichern(daten, alt, altDatei) {
     const nr = E.neueNr({ buchungen: alle });
     for (const d of ziele) {
       const anderes = ziele.find((x) => x !== d);
-      const zeile = { ...b, nr, quelle: 'manuell', topf: d === 'gemeinsam' && ziele.includes('tagesgeld') ? null : b.topf,
+      const zeile = { ...b, art: artFuerDatei(b, d), nr, quelle: 'manuell', topf: d === 'gemeinsam' && ziele.includes('tagesgeld') ? null : b.topf,
         gegenstueck: anderes ? `${anderes === 'tagesgeld' ? 'Tagesgeld' : 'Gemeinsam'} ${nr}` : null };
       const eTag = z.d[d].eTag;
       try { await D.zeileNeu(z.d[d].ort, 'Buchungen', zeile, { doppelt: D.gleicheBuchung(b) }); }
