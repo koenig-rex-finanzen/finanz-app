@@ -40,6 +40,7 @@ const art = () => (z.bereich === 'gemeinsam' ? 'gemeinsam' : privat());
 export async function aktiv() {
   if (new URLSearchParams(location.search).has('neu') || location.hash === '#umzug') return true;
   try { if (localStorage.getItem('ug.neu.aktiv') === '1') return true; } catch {}
+  if (new URLSearchParams(location.search).has('code')) { try { await ms.rueckkehrVerarbeiten(); } catch {} }
   if (!ms.angemeldet()) return false;
   const f = await D.finden('gemeinsam').catch(() => null);
   if (f) { try { localStorage.setItem('ug.neu.aktiv', '1'); } catch {} return true; }
@@ -55,6 +56,7 @@ export async function start() {
     z.test = true;
     D.testModus({ standard: 'Umbau-Test', kai: 'Apps/Kai/Umbau-Test', natalie: 'Apps/Natalie/Umbau-Test' });
   }
+  if (q.get('neu') === 'beispiel') return beispielStart();
   try { await ms.rueckkehrVerarbeiten(); } catch (e) { z.fehler = e.message; }
   if (!ms.angemeldet()) return anmeldeSeite();
   if (location.hash === '#umzug') return (await import('./umzug.js')).seite();
@@ -63,6 +65,19 @@ export async function start() {
   await allesLaden();
   window.addEventListener('hashchange', () => { if (location.hash === '#umzug') location.reload(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !z.speichert) allesLaden(true); });
+}
+
+/** Beispielmodus: erfundene Daten, ohne Anmeldung, nichts wird gespeichert (zum Ansehen und Testen der Oberfläche). */
+async function beispielStart() {
+  const B = await import('./kern/beispiel.js'); const V = await import('./kern/vorlage.js');
+  const H = heute(); z.person = new URLSearchParams(location.search).get('person') || 'Kai'; z.beispiel = true;
+  const datei = async (d) => ({ ort: null, eTag: 'x', webUrl: '#', m: await E.leseDatei(V.dateiBauen(d)) });
+  z.d.gemeinsam = await datei({ ...B.beispielPrivat(H), bereich: 'gemeinsam', titel: 'Beispiel Gemeinsam' });
+  z.d.tagesgeld = await datei(B.beispielTagesgeld(H));
+  z.d[privat()] = await datei({ ...B.beispielPrivat(H), bereich: privat() });
+  for (const x of [z.d.gemeinsam, z.d[privat()]]) x.m.einstellungen.Funktionen = (VORHER_AKTIV[x.m.bereich] || []).join(',');
+  if (location.hash === '#kai') z.bereich = 'privat';
+  zeichnen();
 }
 
 function anmeldeSeite() {
@@ -143,6 +158,7 @@ function zeichnen() {
     : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
       : z.tab === 'toepfe' ? (z.topf ? topfSeite(a) : toepfeSeite(a)) : mehrSeite();
   $('#app').innerHTML = `${kopf()}<main class="wrap einheit ${z.bereich === 'gemeinsam' ? '' : privat() === 'kai' ? 'kai' : 'meins'}">
+    ${z.beispiel ? '<div class="hinweis info">Beispielmodus mit erfundenen Daten.</div>' : ''}
     ${z.test ? '<div class="hinweis info">Testbetrieb mit Testdateien – hier Eingetragenes landet nicht in euren echten Dateien.</div>' : ''}
     ${z.fehler ? `<div class="hinweis warn">${h(z.fehler)} ${/Anmeldung/.test(z.fehler) ? '<button class="link" id="neu-anmelden">Neu anmelden</button>' : ''}</div>` : ''}
     ${z.speichert ? `<div class="hinweis info">${h(z.speichert)}</div>` : ''}
@@ -262,7 +278,7 @@ function buchungenSeite() {
     ${alle.length ? `<div class="buchungen">${alle.map((b) => {
       const plus = eigene.has(b.nach) && !eigene.has(b.von);
       const offen = z.offenNr === b._datei + b.nr;
-      return `<div class="bu-wrap"><button class="bu" data-bu="${h(b._datei + '|' + b.nr)}" aria-expanded="${offen}"><div><div class="t">${h(b.posten || b.beschreibung || (plus ? b.von : b.nach) || b.art)}</div>
+      return `<div class="bu-wrap"><button class="bu" data-bu="${h(b._datei + '|' + b.nr)}" aria-expanded="${offen}"><div><div class="t">${h(b.posten || b.beschreibung || (/^extern$/i.test(plus ? b.von : b.nach) ? b.kategorie : null) || (plus ? b.von : b.nach) || b.art)}</div>
         <div class="r">${datumKurz(b.datum)} · ${h(b.von)} → ${h(b.nach)}${b.kategorie ? ` · <span class="chip">${h(b.kategorie)}</span>` : ''}${b.topf ? ` · Topf ${h(b.topf)}` : ''}</div></div>
         <div class="betrag ${plus ? '' : 'neg'}">${plus ? '+' : b.art === 'Umbuchung' || /Topf/.test(b.art) ? '' : '−'}${eur(b.betrag)}</div></button>
         ${offen ? `<div class="bu-aktion"><dl class="more">${[['Nr', b.nr], ['Art', b.art], ['Gilt für', b.giltFuer && monatsname(b.giltFuer, true)], ['Kategorie', b.kategorie], ['Bank-Kategorie', b.bankKategorie], ['Posten', b.posten], ['Topf', b.topf], ['Beschreibung', b.beschreibung], ['Kommentar', b.kommentar], ['Gezahlt von', b.gezahltVon], ['Quelle', b.quelle], ['Gegenstück', b.gegenstueck]].filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${h(v)}</dd>`).join('')}</dl>
@@ -341,6 +357,7 @@ function verdrahten() {
 
 async function speichern(text, arbeit) {
   if (z.speichert) return;
+  if (z.beispiel) { z.fehler = 'Beispielmodus: Es wird nichts gespeichert.'; return zeichnen(); }
   z.speichert = text; zeichnen();
   try { await arbeit(); z.fehler = null; } catch (e) { z.fehler = e instanceof od.AnmeldungNoetig ? 'Die Anmeldung ist abgelaufen. Bitte neu anmelden.' : e.message; }
   finally { z.speichert = null; zeichnen(); }

@@ -91,8 +91,6 @@ const z = { modell: null, datei: null, monat: null, bereich: holen('bereich') ||
 
 // ---------- Start
 async function start() {
-  // Umbau „Einheitliche Bereiche“: Gibt es die neuen Dateien, startet die neue Oberfläche.
-  try { const neu = await import('./neu.js'); if (await neu.aktiv()) return neu.start(); } catch (e) { console.error('Neue Oberfläche:', e); }
   hilfe.starten();
   let fehler = null;
   if (ms.aktiv()) {

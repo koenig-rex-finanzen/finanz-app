@@ -1,7 +1,7 @@
 // Offline-Fähigkeit: App-Dateien zwischenspeichern. Die Excel-Daten liegen nicht hier,
 // sondern in der IndexedDB des Geräts.
 const CACHE = 'unser-geld-v0.17.1';
-const DATEIEN = ['./', 'index.html', 'app.css', 'app.js', 'kern/xlsx.js', 'kern/lesen.js', 'kern/rechnen.js', 'kern/verstehen.js', 'anmeldung.js', 'onedrive.js', 'config.js', 'pc.js', 'kern/csv.js', 'kern/privat.js', 'meins.js', 'kern/kai.js', 'kai.js', 'hilfe.js', 'sprit.js', 'kai.webmanifest', 'neu.js', 'datei.js', 'umzug.js', 'kern/einheit.js', 'kern/format.js', 'kern/mappe.js', 'kern/vorlage.js', 'kern/umzug.js', 'kern/blattkopie.js',
+const DATEIEN = ['./', 'index.html', 'start.js', 'app.css', 'app.js', 'kern/xlsx.js', 'kern/lesen.js', 'kern/rechnen.js', 'kern/verstehen.js', 'anmeldung.js', 'onedrive.js', 'config.js', 'pc.js', 'kern/csv.js', 'kern/privat.js', 'meins.js', 'kern/kai.js', 'kai.js', 'hilfe.js', 'sprit.js', 'kai.webmanifest', 'neu.js', 'datei.js', 'umzug.js', 'kern/einheit.js', 'kern/format.js', 'kern/mappe.js', 'kern/vorlage.js', 'kern/umzug.js', 'kern/blattkopie.js', 'kern/beispiel.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(DATEIEN)).then(() => self.skipWaiting())));
 self.addEventListener('activate', (e) => e.waitUntil(caches.keys()

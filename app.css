@@ -742,3 +742,5 @@ body.einheit a.konto{color:inherit;text-decoration:none}
 body.einheit h3{font-size:16px;margin:16px 0 8px}
 body.einheit button.topf{width:100%;text-align:left}
 body.einheit .knoepfe{display:flex;gap:10px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap}
+body.einheit .meins h2::before,body.einheit .kai h2::before{display:none}
+body.einheit .meins h2,body.einheit .kai h2{display:block}
