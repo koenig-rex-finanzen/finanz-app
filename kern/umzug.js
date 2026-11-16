@@ -8,6 +8,8 @@ import { kern, r2, kontostand as neuStand } from './einheit.js';
 import { SPRIT_MUSTER, toepfeStand as altToepfe, kontostand as altKontostand, monatsansicht } from './rechnen.js';
 import * as P from './privat.js';
 import * as K from './kai.js';
+import { entpacken, blaetterVorbereiten, spaltenUmschreiben } from './blattkopie.js';
+import { ERSTE_ZEILE, BLAETTER } from './format.js';
 
 const MONATSNAMEN = ['januar', 'februar', 'märz', 'april', 'mai', 'juni', 'juli', 'august', 'september', 'oktober', 'november', 'dezember'];
 /** „03.07.“ → {monat:7, tag:3}, „Oktober“ → {monat:10}, „Monatsanfang“ → {tag:1}. */
@@ -51,7 +53,8 @@ const neuesKonto = (k, eigen, frei) => ({
 /**
  * Teilt die alte gemeinsame Datei auf: Tagesgeld (alle Sparkonten mit Töpfen) und Gemeinsam (Gemeinschaftskonto, Visa, neue c24-Konten).
  * @param {object} alt aus kern/lesen.js leseBuchhaltung()
- * @param {{neueKonten?: Array, vwSchluss?: string, sparratenFormel?: boolean}} opt
+ * @param {{neueKonten?: Array, vwSchluss?: string, kostenKorrektur?: Object<string, object>}} opt
+ *   kostenKorrektur: Ergänzungen je Kosten-ID, z. B. {K004: {faellig: 1, tag: 15}} (kommen beim Umzug aus der App, nicht aus dem Code)
  */
 export function gemeinsamUndTagesgeld(alt, opt = {}) {
   const spar = new Set(alt.konten.filter((k) => k.rolle === 'Sparen').map((k) => k.name));
@@ -79,8 +82,9 @@ export function gemeinsamUndTagesgeld(alt, opt = {}) {
   const gKonten = kontenFuer(gem, () => true).map((k) => (gem.has(k.name) ? { ...k, geschlossenAb: vw, bemerkung: [k.bemerkung, 'ab 01.01.2027 nicht mehr genutzt'].filter(Boolean).join(' · ') } : k));
   for (const n of opt.neueKonten || []) gKonten.push({ eigen: 'Ja', frei: 'Ja', status: 'aktiv', rolle: 'gemeinsam', csv: 'Ja', ...n });
   const tKonten = kontenFuer(spar, () => true);
-  const kosten = alt.kosten.map((k) => {
-    const f = faelligAus(k.faellig);
+  const kosten = alt.kosten.map((k0) => {
+    const k = { ...k0, ...(opt.kostenKorrektur?.[k0.id] || {}) };
+    const f = { ...faelligAus(k0.faellig), ...(opt.kostenKorrektur?.[k0.id]?.faellig ? { monat: opt.kostenKorrektur[k0.id].faellig } : {}) };
     if ((k.rhythmus || 'monatlich') !== 'monatlich' && !f.monat) hinweise.push(`Kosten ${k.id} ${k.posten}: Fälligkeit „${k.faellig ?? ''}“ ohne Monat – bitte prüfen`);
     return { id: k.id, posten: k.posten, kategorie: /^sprit\b/i.test(k.posten || '') ? 'Sprit' : kategorieAus(k.bereich), betrag: k.betrag, rhythmus: k.rhythmus || 'monatlich',
       faellig: f.monat ?? null, tag: k.tag ?? f.tag ?? null, konto: k.konto, topf: k.topf, vertragAuf: k.vertragAuf, status: k.status || 'aktiv', ab: k.ab, bis: k.bis,
@@ -251,4 +255,48 @@ export function vergleichKai(k, neu, heute) {
   L.push(zeile('Frei (Konten − Töpfe)', alt.frei, n.freiHeute));
   L.push(zeile('Anzahl Buchungen', k.buchungen.length, neu.buchungen.length));
   return L;
+}
+
+// ---------------------------------------------------------------- Zusatzblätter aus den alten Dateien
+
+const JAHR_TEXTE = { 'Wohnen & Haushalt': 'Haushalt', Autos: 'Auto', 'Abos & Telefon': 'Abos', 'Persönliches': 'ohne Kategorie' };
+/** Alte Spalten → neue Spalten (gemeinsame Datei). Buchungen bleiben gleich (C, D, G, H, P liegen an derselben Stelle). */
+const SPALTEN_GEMEINSAM = { Kosten: { G: 'N', M: 'L', N: 'M' }, Einnahmen: { H: 'M', I: 'N' } };
+
+/**
+ * Aufteilung, Überweisung, Kredite, Jahr aus der alten gemeinsamen Datei.
+ * @param {Uint8Array} altBytes Buchhaltung_Kai_Natalie.xlsx (Archiv)
+ * @param {object} daten Ergebnis gemeinsamUndTagesgeld().gemeinsam (für die Zeile „Sparraten Tagesgeld“)
+ * @returns {Promise<{zusatz, fremdeStile, namen, hinweise}>}
+ */
+export async function zusatzGemeinsam(altBytes, daten) {
+  const z = await entpacken(altBytes);
+  const hinweise = [];
+  const formel = (blatt, f) => {
+    let x = f.replace(/SUM\(tblToepfe\[Sparrate \/ Monat\]\)/g, 'SparratenTagesgeld');
+    if (/tblToepfe/.test(x)) hinweise.push(`${blatt}: Formel verweist noch auf die Töpfe: ${x.slice(0, 80)}`);
+    if (blatt === 'Jahr') {
+      x = x.replace(/(Einnahmen|Kosten)!\$C(\$\d+):\$C(\$\d+)<>""/g, '$1!$B$2:$B$3<>""');
+      x = x.replace(/(Kosten!\$C\$\d+:\$C\$\d+)=\$B(\d+)/g, '$1=IF($B$2="ohne Kategorie","",$B$2)');
+      x = spaltenUmschreiben(x, SPALTEN_GEMEINSAM);
+    }
+    return x;
+  };
+  const { blaetter, fremdeStile, fehlend } = blaetterVorbereiten(z, ['Überweisung', 'Aufteilung', 'Kredite', 'Jahr'], { formel, texte: { Jahr: JAHR_TEXTE } });
+  for (const f of fehlend) hinweise.push(`Blatt ${f} fehlt in der alten Datei`);
+  const zeile = ERSTE_ZEILE + daten.einstellungen.findIndex((e) => e.schluessel === 'Sparraten Tagesgeld');
+  const kb = BLAETTER.Konten.zeilen + ERSTE_ZEILE - 1;
+  const namen = [
+    { name: 'kGem', ref: `INDEX('Konten'!$B$5:$B$${kb},MATCH("KT01",'Konten'!$A$5:$A$${kb},0))` },
+    { name: 'kVisa', ref: `INDEX('Konten'!$B$5:$B$${kb},MATCH("KT02",'Konten'!$A$5:$A$${kb},0))` },
+    { name: 'SparratenTagesgeld', ref: `'Einstellungen'!$B$${zeile}` },
+  ];
+  return { zusatz: blaetter, fremdeStile, namen, hinweise };
+}
+
+/** Depot aus Kai_Privat.xlsx (verweist nur auf „TR Buchungen“, das gleich aufgebaut bleibt). */
+export async function zusatzKai(altBytes) {
+  const z = await entpacken(altBytes);
+  const { blaetter, fremdeStile, fehlend } = blaetterVorbereiten(z, ['Depot']);
+  return { zusatz: blaetter, fremdeStile, namen: [], hinweise: fehlend.map((f) => `Blatt ${f} fehlt`) };
 }

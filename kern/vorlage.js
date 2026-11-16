@@ -46,7 +46,7 @@ const FORMELN = {
     differenz: (r, c) => `IF(OR(${c.bank}${r}="",${c.datei}${r}=""),"",ROUND(${c.bank}${r}-${c.datei}${r},2))`,
   },
   Kosten: {
-    monatswert: (r, c) => `IF(${c.posten}${r}="","",IF(${c.status}${r}="beendet",0,${c.betrag}${r}/${ABSTAND(c.rhythmus + r)}))`,
+    monatswert: (r, c) => `IF(${c.posten}${r}="",0,IF(${c.status}${r}="beendet",0,${c.betrag}${r}/${ABSTAND(c.rhythmus + r)}))`,
     planAkt: (r, c) => planFormel(r, c, 'AktMonat'),
     istAkt: (r, c) => `IF(${c.posten}${r}="","",SUMIFS(${BU('betrag')},${BU('posten')},${c.posten}${r},${BU('giltFuer')},AktMonat,${BU('art')},"Ausgabe"))`,
     offenAkt: (r, c) => `IF(${c.posten}${r}="","",IF(${ZAEHLT(c.konto + r)},MAX(0,${c.planAkt}${r}-${c.istAkt}${r}),0))`,
@@ -80,7 +80,7 @@ function wert(typ, v) {
   if (typ === 'd' || typ === 'm') return typeof v === 'number' ? v : serial(typ === 'm' && String(v).length === 7 ? v + '-01' : v);
   if (typ === 'z' || typ === 'n') return typeof v === 'number' ? v : Number(String(v).replace(',', '.'));
   if (typ === 'j') return v === true || v === 'Ja' ? 'Ja' : v === false || v === 'Nein' ? 'Nein' : String(v);
-  return String(v);
+  return typeof v === 'number' ? v : String(v);
 }
 const STIL_TYP = { d: STIL.datum, m: STIL.monat, z: STIL.euro };
 const FORMEL_STIL = { Töpfe: STIL.formelEuro, Konten: STIL.formelEuro, Kontostände: STIL.formelEuro, Kosten: STIL.formelEuro, Einnahmen: STIL.formelEuro, Limits: STIL.formelEuro, 'Soll-Überweisungen': STIL.formelEuro };
@@ -129,7 +129,8 @@ function listenBlatt() {
   keys.forEach((k, i) => {
     const col = String.fromCharCode(65 + i);
     b.set(col + '1', { v: k, s: STIL.kopf });
-    const werte = k === 'Monate' ? Array.from({ length: 72 }, (_, j) => serial(`${2026 + Math.floor(j / 12)}-${String(j % 12 + 1).padStart(2, '0')}-01`)) : LISTEN[k];
+    // Monate ab November 2026 (wie die alte gemeinsame Datei: Aufteilung/Überweisung zeigen auf Listen!A2 …)
+    const werte = k === 'Monate' ? Array.from({ length: 72 }, (_, j) => serial(`${2026 + Math.floor((j + 10) / 12)}-${String((j + 10) % 12 + 1).padStart(2, '0')}-01`)) : LISTEN[k];
     werte.forEach((v, j) => b.set(col + (j + 2), { v, s: k === 'Monate' ? STIL.monat : 0 }));
     namen.push({ name: 'lst' + k.replace(/\W/g, ''), ref: `Listen!$${col}$2:$${col}$${werte.length + 1}` });
   });
@@ -261,7 +262,7 @@ export function dateiBauen(d) {
   for (const name of GRUNDBLAETTER) if (!fertig[name]) fertig[name] = tabellenBlatt(name, daten[name] || []).b;
   const blaetter = GRUNDBLAETTER.map((n) => fertig[n]);
   for (const z of d.zusatz || []) blaetter.splice(blaetter.length - 2, 0, z);
-  return mappeSchreiben({ titel: d.titel, blaetter, namen: [...ue.namen, ...li.namen] });
+  return mappeSchreiben({ titel: d.titel, blaetter, namen: [...ue.namen, ...li.namen, ...(d.namen || [])], fremdeStile: d.fremdeStile });
 }
 
 /** Zusatzblatt mit fester Tabelle (kern/format.js ZUSATZ_TABELLEN), z. B. „Offene Punkte“, „TR Buchungen“. */

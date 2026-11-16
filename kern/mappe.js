@@ -69,6 +69,36 @@ const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cellStyles count="1"><cellStyle name="Standard" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
 
+// Fremde Stile (aus einer alten Datei) hinten anhängen. Liefert neues styles.xml und den Versatz der Zell-Stile.
+const teile = (xml, tag, inner) => { const m = xml.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`)); return m ? [...m[1].matchAll(new RegExp(`<${inner}\\b[^>]*/>|<${inner}\\b[^>]*>[\\s\\S]*?</${inner}>`, 'g'))].map((x) => x[0]) : []; };
+function stileZusammen(fremd) {
+  if (!fremd) return { xml: STYLES, xfVersatz: 0 };
+  const eigen = { numFmts: teile(STYLES, 'numFmts', 'numFmt'), fonts: teile(STYLES, 'fonts', 'font'), fills: teile(STYLES, 'fills', 'fill'), borders: teile(STYLES, 'borders', 'border'), xfs: teile(STYLES, 'cellXfs', 'xf'), dxfs: teile(STYLES, 'dxfs', 'dxf') };
+  const f = { numFmts: teile(fremd, 'numFmts', 'numFmt'), fonts: teile(fremd, 'fonts', 'font'), fills: teile(fremd, 'fills', 'fill'), borders: teile(fremd, 'borders', 'border'), xfs: teile(fremd, 'cellXfs', 'xf'), dxfs: teile(fremd, 'dxfs', 'dxf') };
+  const nf = new Map(); let naechste = 300;
+  const numFmts = [...eigen.numFmts];
+  for (const x of f.numFmts) { const id = Number(x.match(/numFmtId="(\d+)"/)[1]); const neu = naechste++; nf.set(id, neu); numFmts.push(x.replace(/numFmtId="\d+"/, `numFmtId="${neu}"`)); }
+  const mapNf = (x) => x.replace(/numFmtId="(\d+)"/g, (a, id) => `numFmtId="${nf.get(+id) ?? id}"`);
+  const fo = eigen.fonts.length, fi = eigen.fills.length, bo = eigen.borders.length;
+  const xfs = [...eigen.xfs, ...f.xfs.map((x) => mapNf(x).replace(/fontId="(\d+)"/, (a, n) => `fontId="${+n + fo}"`).replace(/fillId="(\d+)"/, (a, n) => `fillId="${+n + fi}"`)
+    .replace(/borderId="(\d+)"/, (a, n) => `borderId="${+n + bo}"`).replace(/xfId="\d+"/, 'xfId="0"'))];
+  const dxfs = [...eigen.dxfs, ...f.dxfs.map(mapNf)];
+  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="${numFmts.length}">${numFmts.join('')}</numFmts><fonts count="${fo + f.fonts.length}">${[...eigen.fonts, ...f.fonts].join('')}</fonts><fills count="${fi + f.fills.length}">${[...eigen.fills, ...f.fills].join('')}</fills><borders count="${bo + f.borders.length}">${[...eigen.borders, ...f.borders].join('')}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.join('')}</cellXfs><cellStyles count="1"><cellStyle name="Standard" xfId="0" builtinId="0"/></cellStyles><dxfs count="${dxfs.length}">${dxfs.join('')}</dxfs></styleSheet>`;
+  return { xml, xfVersatz: eigen.xfs.length, dxfVersatz: eigen.dxfs.length };
+}
+
+/** Kopiertes Blatt einbauen: Stile versetzen, Texte in die neue Textliste übernehmen, Beziehungen neu nummerieren. */
+function kopieXml(k, sst, stile) {
+  const neuerText = (t) => { if (!sst.index.has(t)) { sst.index.set(t, sst.liste.length); sst.liste.push(t); } return sst.index.get(t); };
+  let x = k.xml;
+  x = x.replace(/<(c|row)\b([^>]*?)\bs="(\d+)"/g, (a, tag, vor, n) => `<${tag}${vor}s="${+n + stile.xfVersatz}"`);
+  x = x.replace(/<col\b([^>]*?)\bstyle="(\d+)"/g, (a, vor, n) => `<col${vor}style="${+n + stile.xfVersatz}"`);
+  x = x.replace(/dxfId="(\d+)"/g, (a, n) => `dxfId="${+n + (stile.dxfVersatz || 0)}"`);
+  x = x.replace(/(<c\b[^>]*\bt="s"[^>]*>)(\s*<v>)(\d+)(<\/v>)/g, (a, kopf, v, n, e) => { const t = k.strings[+n] ?? ''; return kopf + v + neuerText(k.textMap?.[t] ?? t) + e; });
+  return x;
+}
+
 // ---------------------------------------------------------------- Blätter
 const SP = (i) => { let s = ''; i += 1; while (i > 0) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26); } return s; };
 const zelleXml = (ref, z, sst) => {
@@ -115,7 +145,10 @@ export function mappeSchreiben(m) {
     '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'];
   const wbRels = [];
   const sst = { index: new Map(), liste: [] };
-  let tabNr = 0;
+  const stile = stileZusammen(m.fremdeStile);
+  let tabNr = 0, drawNr = 0, chartNr = 0;
+  const tabNamen = new Set(m.blaetter.filter((b) => b.tabelle).map((b) => b.tabelle.name));
+  const TYP = { table: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table', drawing: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing', chart: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart' };
   m.blaetter.forEach((b, i) => {
     const nr = i + 1;
     const rels = [];
@@ -128,8 +161,35 @@ export function mappeSchreiben(m) {
       ct.push(`<Override PartName="/xl/tables/table${tabNr}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`);
       rels.push(['rIdT1', `../tables/table${tabNr}.xml`, 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/table']);
     }
-    if (b.rohXml) dateien.push([`xl/worksheets/sheet${nr}.xml`, b.rohXml]);
-    else dateien.push([`xl/worksheets/sheet${nr}.xml`, blattXml(b, rels.map((r) => r[0]), sst)]);
+    if (b.kopie) {
+      for (const t of b.kopie.teile || []) {
+        if (t.typ === 'table') {
+          tabNr++;
+          let txml = t.xml.replace(/(<table\b[^>]*?)\bid="\d+"/, `$1id="${tabNr}"`);
+          const alt = txml.match(/\bname="([^"]+)"/)?.[1];
+          if (alt && tabNamen.has(alt)) { const neu = alt + '_alt'; txml = txml.replace(/\bname="[^"]+"/, `name="${neu}"`).replace(/displayName="[^"]+"/, `displayName="${neu}"`); }
+          if (alt) tabNamen.add(alt);
+          dateien.push([`xl/tables/table${tabNr}.xml`, txml]);
+          ct.push(`<Override PartName="/xl/tables/table${tabNr}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`);
+          rels.push([t.rId, `../tables/table${tabNr}.xml`, TYP.table]);
+        } else if (t.typ === 'drawing') {
+          drawNr++;
+          const dRels = [];
+          for (const c of t.unter || []) {
+            chartNr++;
+            dateien.push([`xl/charts/chart${chartNr}.xml`, c.xml]);
+            ct.push(`<Override PartName="/xl/charts/chart${chartNr}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`);
+            dRels.push(`<Relationship Id="${c.rId}" Type="${TYP.chart}" Target="../charts/chart${chartNr}.xml"/>`);
+          }
+          dateien.push([`xl/drawings/drawing${drawNr}.xml`, t.xml]);
+          dateien.push([`xl/drawings/_rels/drawing${drawNr}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${dRels.join('')}</Relationships>`]);
+          ct.push(`<Override PartName="/xl/drawings/drawing${drawNr}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`);
+          rels.push([t.rId, `../drawings/drawing${drawNr}.xml`, TYP.drawing]);
+        }
+      }
+      dateien.push([`xl/worksheets/sheet${nr}.xml`, kopieXml(b.kopie, sst, stile)]);
+    } else dateien.push([`xl/worksheets/sheet${nr}.xml`, blattXml(b, rels.map((r) => r[0]), sst)]);
     if (rels.length) dateien.push([`xl/worksheets/_rels/sheet${nr}.xml.rels`, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels.map(([id, t, ty]) => `<Relationship Id="${id}" Type="${ty}" Target="${t}"/>`).join('')}</Relationships>`]);
     ct.push(`<Override PartName="/xl/worksheets/sheet${nr}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`);
@@ -153,7 +213,7 @@ export function mappeSchreiben(m) {
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets>${m.blaetter.map((b, i) => `<sheet name="${esc(b.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets>${namen ? `<definedNames>${namen}</definedNames>` : ''}<calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>`],
     ['xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${wbRels.join('')}</Relationships>`],
-    ['xl/styles.xml', STYLES],
+    ['xl/styles.xml', stile.xml],
   );
   return zip(dateien);
 }
