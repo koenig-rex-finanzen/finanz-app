@@ -265,6 +265,8 @@ export function abgleichen(exporte, dateien, { kategorien = [] } = {}) {
     const extern = m.konten.find((k) => k.rolle === 'extern')?.name;
     Object.assign(l, vorschlagen(l.zeile, l.konto, gegen, m, { kategorien, extern }));
     l.gegen = gegen?.name || null;
+    // Stichwort für „Regel merken“: Empfänger (c24) bzw. kurzer Name aus dem Bank-Text (VW)
+    l.stichwort = (l.zeile.empfaenger || kurzname(l.zeile.text, l.zeile.umsatzart) || '').trim().slice(0, 40) || null;
   }
 
   // Abgleich mit dem, was ihr selbst eingetragen habt – je Konto

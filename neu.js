@@ -187,7 +187,7 @@ function zeichnen() {
   document.body.dataset.bereich = document.documentElement.dataset.bereich = z.bereich === 'gemeinsam' ? 'gemeinsam' : FARBE[privat()];
   const a = ansicht();
   const inhalt = !a ? (z.laedt ? '<p class="leer">Wird geladen … (das kann bei langsamem OneDrive etwas dauern)</p>' : z.fehler ? '' : '<p class="leer">Noch nichts geladen.</p>')
-    : z.seite === 'import' ? importSeite() : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
+    : z.seite === 'import' ? importSeite() : z.seite === 'kontostand-pruefen' ? kontostandSeite() : z.tab === 'uebersicht' ? uebersicht(a) : z.tab === 'vorschau' ? vorschauSeite(a) : z.tab === 'buchungen' ? buchungenSeite()
       : z.tab === 'toepfe' ? (z.topf ? topfSeite(a) : toepfeSeite(a)) : mehrSeite();
   $('#app').innerHTML = `${kopf()}<main class="wrap einheit ${z.bereich === 'gemeinsam' ? '' : privat() === 'kai' ? 'kai' : 'meins'}">
     ${z.beispiel ? '<div class="hinweis info">Beispielmodus mit erfundenen Daten.</div>' : ''}
@@ -379,8 +379,8 @@ function verdrahten() {
   document.querySelectorAll('[data-loeschen]').forEach((b) => (b.onclick = () => { const [d, nr] = b.dataset.loeschen.split('|'); loeschen(d, nr); }));
   document.querySelectorAll('[data-topf]').forEach((b) => (b.onclick = () => { z.topf = b.dataset.topf; zeichnen(); scrollTo(0, 0); }));
   $('#topf-zurueck')?.addEventListener('click', () => { z.topf = null; zeichnen(); });
-  document.querySelectorAll('[data-seite]').forEach((b) => (b.onclick = () => { if (b.dataset.seite === 'import') { z.seite = 'import'; zeichnen(); scrollTo(0, 0); } else extraSeite(b.dataset.seite); }));
-  importVerdrahten();
+  document.querySelectorAll('[data-seite]').forEach((b) => (b.onclick = () => { if (['import', 'kontostand-pruefen'].includes(b.dataset.seite)) { z.seite = b.dataset.seite; zeichnen(); scrollTo(0, 0); } else extraSeite(b.dataset.seite); }));
+  importVerdrahten(); kontostandVerdrahten();
   document.querySelectorAll('[data-funktion]').forEach((c) => (c.onchange = () => funktionSetzen(c.dataset.funktion, c.checked)));
   $('#wie-vorher')?.addEventListener('click', wieVorher);
   document.querySelectorAll('[data-hoch]').forEach((b) => (b.onclick = () => widgetSchieben(+b.dataset.hoch, -1)));
@@ -586,6 +586,7 @@ function importSeite() {
       ${b && l.status === 'neu' ? `<div class="imp-vorschlag"><span class="ampel ${l.ampel}"></span><span>${h(b.art)}: ${h(b.von)} → ${h(b.nach)}${b.giltFuer !== l.zeile.datum.slice(0, 7) ? ` · gilt für ${monatsname(b.giltFuer, true)}` : ''}</span>
         ${b.art === 'Ausgabe' ? `<select data-imp-kat="${idx}"><option value="">Kategorie …</option>${kategorienListe().map((k) => `<option ${k === b.kategorie ? 'selected' : ''}>${h(k)}</option>`).join('')}</select>` : ''}
         <input data-imp-posten="${idx}" list="imp-posten" placeholder="Posten (optional)" value="${h(b.posten || '')}">
+        ${l.stichwort && b.art !== 'Umbuchung' ? `<label class="imp-regel"><input type="checkbox" data-imp-regel="${idx}" ${l.regel ? 'checked' : ''}> Regel merken: „${h(l.stichwort)}“ → Kategorie/Posten</label>` : ''}
         ${l.grund ? `<small class="hint">${h(l.grund)}</small>` : ''}</div>` : `<div class="imp-vorschlag"><small class="hint">${h(l.grund || '')}</small></div>`}
       ${l.status === 'vielleicht' ? `<div class="seg imp-entscheid">${[['gleich', `Ist ${l.kandidat.nr}`], ['neu', 'Neue Buchung'], ['', 'Überspringen']].map(([w, n]) => `<label><input type="radio" name="imp-e-${idx}" value="${w}" data-imp-entscheid="${idx}" ${(l.entscheidung || '') === w ? 'checked' : ''}><span>${n}</span></label>`).join('')}</div>` : ''}
     </div>`;
@@ -622,6 +623,7 @@ function importVerdrahten() {
   document.querySelectorAll('[data-imp-wahl]').forEach((c) => (c.onchange = () => { z.imp.ergebnis.zeilen[+c.dataset.impWahl].auswahl = c.checked; zeichnen(); }));
   document.querySelectorAll('[data-imp-kat]').forEach((c) => (c.onchange = () => { z.imp.ergebnis.zeilen[+c.dataset.impKat].buchung.kategorie = c.value || null; }));
   document.querySelectorAll('[data-imp-posten]').forEach((c) => (c.onchange = () => { z.imp.ergebnis.zeilen[+c.dataset.impPosten].buchung.posten = c.value.trim() || null; }));
+  document.querySelectorAll('[data-imp-regel]').forEach((c) => (c.onchange = () => { z.imp.ergebnis.zeilen[+c.dataset.impRegel].regel = c.checked; }));
   document.querySelectorAll('[data-imp-entscheid]').forEach((r) => (r.onchange = () => { const l = z.imp.ergebnis.zeilen[+r.dataset.impEntscheid]; l.entscheidung = r.value || null; l.auswahl = !!r.value; zeichnen(); }));
   $('#imp-ok')?.addEventListener('click', importUebernehmen);
 }
@@ -664,7 +666,87 @@ function importUebernehmen() {
       hinweise.push(...r.uebersprungen);
       await neuLaden(d, eTag);
     }
+    // Gemerkte Regeln ins Blatt „Regeln“ der Datei, in der das Konto liegt (ein Stichwort nur einmal)
+    let regeln = 0;
+    for (const l of i.ergebnis.zeilen.filter((x) => x.regel && x.auswahl && x.stichwort && (x.buchung?.kategorie || x.buchung?.posten))) {
+      const d = l.konto.datei; const m = z.d[d].m;
+      if ((m.regeln || []).some((r) => String(r.stichwort || '').toLowerCase() === l.stichwort.toLowerCase())) continue;
+      await D.zeileNeu(z.d[d].ort, 'Regeln', { stichwort: l.stichwort, kategorie: l.buchung.kategorie, posten: l.buchung.posten, topf: l.buchung.topf, angelegt: heute() });
+      (m.regeln ||= []).push({ stichwort: l.stichwort }); regeln++;
+    }
     z.imp = null;
-    z.impMeldung = `Übernommen – ${erg.join(' · ') || 'nichts zu tun'}.${hinweise.length ? ` Übersprungen: ${h(hinweise.join('; '))}.` : ''}`;
+    z.impMeldung = `Übernommen – ${erg.join(' · ') || 'nichts zu tun'}${regeln ? ` · ${regeln} Regel${regeln > 1 ? 'n' : ''} gemerkt` : ''}.${hinweise.length ? ` Übersprungen: ${h(hinweise.join('; '))}.` : ''}`;
   });
+}
+
+// ---------------------------------------------------------------- Kontostand prüfen / Monatsabschluss
+// Stand aus der Bank-App eintragen → Vergleich mit der Datei → Zeile im Blatt „Kontostände“ (Monat, Konto, Ist-Stand, Kommentar, Geprüft am).
+// Konten ohne Anfangsbestand (z. B. neue c24-Konten): Anfangsbestand und Stichtag setzen.
+
+function kontostandSeite() {
+  const H = heute(); const dateien = bereichsDateien();
+  const konten = Object.entries(dateien).flatMap(([d, m]) => m.konten.filter((k) => k.eigen === 'Ja' && k.status !== 'geschlossen').map((k) => ({ ...k, datei: d })));
+  const eingabe = z.kst || {};
+  return `<section><button class="link" id="kst-zurueck">‹ Übersicht</button><h2>Kontostand prüfen</h2>
+    <p class="hint">Stand aus der Bank-App eintragen. Stimmt er mit der Datei überein, ist alles gebucht. Sonst fehlt etwas oder ist doppelt – dann hilft meist der Import.
+    Gespeichert wird der Abgleich im Blatt „Kontostände“ (Monatsabschluss).</p></section>
+    ${konten.map((k, i) => {
+      const m = dateien[k.datei];
+      const stand = k.anfang == null ? null : E.kontostand(m, k.name, H);
+      const letzte = (m.kontostaende || []).filter((x) => x.konto === k.name && x.bank != null).sort((a, b) => String(b.geprueft || b.monat).localeCompare(String(a.geprueft || a.monat)))[0];
+      const e = eingabe[i] || {};
+      const bank = e.bank != null && e.bank !== '' ? Number(String(e.bank).replace(/\./g, '').replace(',', '.')) : null;
+      const diff = bank != null && stand != null && isFinite(bank) ? E.r2(bank - stand) : null;
+      if (stand == null) {
+        return `<section><h3>${h(k.name)}</h3><div class="konten"><div class="konto"><span class="dot" style="background:var(--warn)"></span><div><div class="name">Noch kein Anfangsbestand</div>
+          <div class="sub">Ab dem Stichtag zählt die App jede Buchung dazu. Am besten den Stand vom Vortag des ersten Imports nehmen.</div></div><span></span></div></div>
+          <div class="kst-zeile"><label class="feld"><span>Anfangsbestand</span><input inputmode="decimal" data-kst-anfang="${i}" value="${h(e.anfang ?? '')}" placeholder="0,00"></label>
+          <label class="feld"><span>Stichtag</span><input type="date" data-kst-stichtag="${i}" value="${h(e.stichtag ?? H)}"></label></div>
+          <div class="knoepfe"><button class="knopf klein" data-kst-anfang-speichern="${i}">Anfangsbestand speichern</button></div></section>`;
+      }
+      return `<section><h3>${h(k.name)}</h3><div class="konten"><div class="konto"><span class="dot" style="background:var(--gem)"></span><div><div class="name">Laut Datei heute</div>
+        <div class="sub">${letzte ? `zuletzt geprüft ${letzte.geprueft ? datumKurz(letzte.geprueft) + letzte.geprueft.slice(0, 4) : monatsname(letzte.monat, true)}: Bank ${eur(letzte.bank)}` : 'noch nie geprüft'}</div></div><div class="betrag">${eur(stand)}</div></div></div>
+        <div class="kst-zeile"><label class="feld"><span>Stand laut Bank-App</span><input inputmode="decimal" data-kst-bank="${i}" value="${h(e.bank ?? '')}" placeholder="0,00"></label>
+        <label class="feld"><span>Kommentar (optional)</span><input data-kst-kommentar="${i}" value="${h(e.kommentar ?? '')}"></label></div>
+        ${diff != null ? `<div class="hinweis ${Math.abs(diff) < 0.005 ? 'ok' : 'warn'}">${Math.abs(diff) < 0.005 ? 'Passt genau.' : `Unterschied ${eur(diff)}: ${diff > 0 ? 'auf dem Konto ist mehr als in der Datei – eine Einnahme fehlt oder eine Ausgabe ist doppelt.' : 'auf dem Konto ist weniger als in der Datei – eine Ausgabe fehlt oder eine Einnahme ist doppelt.'}`}</div>` : ''}
+        <div class="knoepfe"><button class="knopf klein" data-kst-speichern="${i}" ${diff == null ? 'disabled' : ''}>Abgleich speichern</button></div></section>`;
+    }).join('')}
+    ${z.kstMeldung ? `<div class="hinweis info">${h(z.kstMeldung)}</div>` : ''}`;
+}
+
+function kontostandVerdrahten() {
+  if (z.seite !== 'kontostand-pruefen') return;
+  const dateien = bereichsDateien();
+  const konten = Object.entries(dateien).flatMap(([d, m]) => m.konten.filter((k) => k.eigen === 'Ja' && k.status !== 'geschlossen').map((k) => ({ ...k, datei: d })));
+  z.kst ||= {};
+  const setze = (i, feld, wert, neu) => { z.kst[i] = { ...(z.kst[i] || {}), [feld]: wert }; if (neu) { const f = document.activeElement?.dataset; zeichnen(); if (f) { const sel = Object.entries(f).map(([k2, v]) => `[data-${k2.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}="${v}"]`).join(''); const el = sel && document.querySelector(sel); if (el) { el.focus(); el.setSelectionRange?.(el.value.length, el.value.length); } } } };
+  $('#kst-zurueck')?.addEventListener('click', () => { z.seite = null; z.kst = null; z.kstMeldung = null; zeichnen(); });
+  document.querySelectorAll('[data-kst-bank]').forEach((x) => (x.oninput = () => setze(+x.dataset.kstBank, 'bank', x.value, true)));
+  document.querySelectorAll('[data-kst-kommentar]').forEach((x) => (x.oninput = () => setze(+x.dataset.kstKommentar, 'kommentar', x.value)));
+  document.querySelectorAll('[data-kst-anfang]').forEach((x) => (x.oninput = () => setze(+x.dataset.kstAnfang, 'anfang', x.value)));
+  document.querySelectorAll('[data-kst-stichtag]').forEach((x) => (x.onchange = () => setze(+x.dataset.kstStichtag, 'stichtag', x.value)));
+  document.querySelectorAll('[data-kst-speichern]').forEach((b) => (b.onclick = () => {
+    const i = +b.dataset.kstSpeichern; const k = konten[i]; const e = z.kst[i] || {};
+    const bank = Number(String(e.bank).replace(/\./g, '').replace(',', '.'));
+    if (!isFinite(bank)) return;
+    speichern('Abgleich wird gespeichert …', async () => {
+      const eTag = z.d[k.datei].eTag;
+      await D.zeileNeu(z.d[k.datei].ort, 'Kontostände', { monat: heute().slice(0, 7), konto: k.name, bank, kommentar: e.kommentar || null, geprueft: heute() });
+      await neuLaden(k.datei, eTag);
+      z.kst[i] = {}; z.kstMeldung = `${k.name}: Abgleich gespeichert.`;
+    });
+  }));
+  document.querySelectorAll('[data-kst-anfang-speichern]').forEach((b) => (b.onclick = () => {
+    const i = +b.dataset.kstAnfangSpeichern; const k = konten[i]; const e = z.kst[i] || {};
+    const anfang = Number(String(e.anfang ?? '').replace(/\./g, '').replace(',', '.'));
+    if (!isFinite(anfang) || e.anfang == null || e.anfang === '') { z.fehler = 'Bitte einen Anfangsbestand eintragen.'; return zeichnen(); }
+    const stichtag = e.stichtag || heute();
+    speichern('Anfangsbestand wird gespeichert …', async () => {
+      const eTag = z.d[k.datei].eTag;
+      const { datei, ...ohne } = k;
+      await D.zeileAendern(z.d[k.datei].ort, 'Konten', k._zeile, k.id, { ...ohne, anfang, stichtag });
+      await neuLaden(k.datei, eTag);
+      z.kst[i] = {}; z.kstMeldung = `${k.name}: Anfangsbestand ${eur(anfang)} ab ${datumKurz(stichtag)}${stichtag.slice(0, 4)} gespeichert.`;
+    });
+  }));
 }

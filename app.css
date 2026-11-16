@@ -778,3 +778,7 @@ body.einheit details.imp-gruppe{margin-top:12px}
 body.einheit details.imp-gruppe summary{cursor:pointer;font-weight:600;padding:8px 0}
 body.einheit .hinweis.ok{background:var(--gem-soft);color:var(--ink)}
 body.einheit label.knopf{cursor:pointer}
+body.einheit .kst-zeile{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+body.einheit .kst-zeile .feld input{width:100%}
+body.einheit .imp-regel{flex-basis:100%;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
+body.einheit .imp-regel input{width:18px;height:18px;flex:none;accent-color:var(--gem)}
