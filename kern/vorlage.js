@@ -264,4 +264,5 @@ export function dateiBauen(d) {
   return mappeSchreiben({ titel: d.titel, blaetter, namen: [...ue.namen, ...li.namen] });
 }
 
-export const VORLAGE_ZEILEN = { uebersicht: null };
+/** Zusatzblatt mit fester Tabelle (kern/format.js ZUSATZ_TABELLEN), z. B. „Offene Punkte“, „TR Buchungen“. */
+export const zusatzTabelle = (name, zeilen = []) => tabellenBlatt(name, zeilen).b;

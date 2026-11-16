@@ -108,6 +108,33 @@ export const BLAETTER = {
   },
 };
 
+// Zusatzblätter mit fester Tabelle (werden neu angelegt; Aufteilung, Überweisung, Kredite, Jahr, Depot werden aus der alten Datei kopiert)
+export const ZUSATZ_TABELLEN = {
+  'Offene Punkte': {
+    tabelle: 'tblOffen', zeilen: 200, titel: 'Offene Punkte', text: 'Was noch zu klären oder zu erledigen ist.',
+    spalten: [['nr', 'Nr', 'n', 6], ['thema', 'Thema', 't', 18], ['text', 'Was ist offen', 't', 60], ['status', 'Status', 't', 11], ['notiz', 'Notiz', 't', 40]],
+  },
+  'TR Buchungen': {
+    tabelle: 'tblTR', zeilen: 2000, titel: 'Trade Republic – Buchungen', text: 'Aus dem Trade-Republic-Export. Wird vom Blatt „Depot“ ausgewertet.',
+    spalten: [['datum', 'Datum', 'd', 12], ['typ', 'Typ', 't', 12], ['name', 'Name', 't', 28], ['isin', 'ISIN', 't', 14], ['position', 'Position', 't', 16],
+      ['stueck', 'Stück', 'n', 10], ['kurs', 'Kurs', 'n', 10], ['betrag', 'Betrag', 'z', 11], ['gebuehr', 'Gebühr', 'z', 9], ['steuer', 'Steuer', 'z', 9],
+      ['beschreibung', 'Beschreibung', 't', 30], ['id', 'ID', 't', 20]],
+  },
+  Erinnerungen: {
+    tabelle: 'tblErinnerungen', zeilen: 60, titel: 'Erinnerungen', text: 'Monatliche Erinnerungen. Erledigt = Monate, in denen sie abgehakt wurde.',
+    spalten: [['id', 'ID', 't', 8], ['text', 'Text', 't', 40], ['tag', 'Tag', 'n', 6], ['aktiv', 'Aktiv', 'j', 8], ['erledigt', 'Erledigt (Monate)', 't', 40]],
+  },
+  Challenges: {
+    tabelle: 'tblChallenges', zeilen: 60, titel: 'Challenges', text: 'Spar-Challenges. Daten = Einstellungen der Challenge (von der App gepflegt).',
+    spalten: [['id', 'ID', 't', 8], ['art', 'Art', 't', 14], ['titel', 'Titel', 't', 26], ['start', 'Start', 'd', 12], ['ende', 'Ende', 'd', 12], ['status', 'Status', 't', 11], ['daten', 'Daten', 't', 60]],
+  },
+  Ruhmeshalle: {
+    tabelle: 'tblRuhm', zeilen: 200, titel: 'Ruhmeshalle', text: 'Geschaffte Challenges und Auszeichnungen.',
+    spalten: [['datum', 'Datum', 'd', 12], ['auszeichnung', 'Auszeichnung', 't', 22], ['challenge', 'Challenge', 't', 26], ['text', 'Text', 't', 50]],
+  },
+};
+Object.assign(BLAETTER, ZUSATZ_TABELLEN);
+
 // Grundblätter in jeder Datei, in dieser Reihenfolge. „Übersicht“ und „Vorschau“ erzeugt kern/vorlage.js (nur Formeln),
 // „Erklärung“ und „Listen“ ebenfalls.
 export const GRUNDBLAETTER = ['Übersicht', 'Vorschau', 'Buchungen', 'Konten', 'Kontostände', 'Kosten', 'Einnahmen', 'Töpfe',

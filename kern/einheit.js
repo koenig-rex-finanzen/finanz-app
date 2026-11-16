@@ -35,7 +35,6 @@ export function tabelleLesen(mappe, name) {
   }
   const fehlt = sps.filter((s) => !kopf.has(s.name)).map((s) => s.name);
   if (fehlt.length) throw new Error(`Blatt „${name}“: Spalte(n) ${fehlt.join(', ')} fehlen.`);
-  const erste = sps.find((s) => s.typ !== 'f');
   const out = [];
   for (let r = KOPFZEILE + 1; r <= b.zeilen; r++) {
     const z = { _zeile: r };
@@ -45,7 +44,7 @@ export function tabelleLesen(mappe, name) {
       z[s.key] = v;
       if (v != null && s.typ !== 'f') leer = false;
     }
-    if (!leer && z[erste.key] != null) out.push(z);
+    if (!leer) out.push(z);
   }
   return out;
 }
