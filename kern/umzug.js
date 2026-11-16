@@ -86,7 +86,8 @@ export function gemeinsamUndTagesgeld(alt, opt = {}) {
     const k = { ...k0, ...(opt.kostenKorrektur?.[k0.id] || {}) };
     const f = { ...faelligAus(k0.faellig), ...(opt.kostenKorrektur?.[k0.id]?.faellig ? { monat: opt.kostenKorrektur[k0.id].faellig } : {}) };
     if ((k.rhythmus || 'monatlich') !== 'monatlich' && !f.monat) hinweise.push(`Kosten ${k.id} ${k.posten}: Fälligkeit „${k.faellig ?? ''}“ ohne Monat – bitte prüfen`);
-    return { id: k.id, posten: k.posten, kategorie: /^sprit\b/i.test(k.posten || '') ? 'Sprit' : kategorieAus(k.bereich), betrag: k.betrag, rhythmus: k.rhythmus || 'monatlich',
+    // Der Posten Sprit behält seine Kategorie (Jahr-Übersicht); die Kategorie „Sprit“ bekommen nur die Tank-Buchungen (Sprit-Limit)
+    return { id: k.id, posten: k.posten, kategorie: kategorieAus(k.bereich), betrag: k.betrag, rhythmus: k.rhythmus || 'monatlich',
       faellig: f.monat ?? null, tag: k.tag ?? f.tag ?? null, konto: k.konto, topf: k.topf, vertragAuf: k.vertragAuf, status: k.status || 'aktiv', ab: k.ab, bis: k.bis,
       bemerkung: [k.bemerkung, k.faellig && !f.monat && !f.tag ? `Fällig: ${k.faellig}` : null].filter(Boolean).join(' · ') || null };
   });
@@ -105,7 +106,7 @@ export function gemeinsamUndTagesgeld(alt, opt = {}) {
       kontostaende: ks(spar), regeln: [], kategorien, einstellungen: einstellungen('tagesgeld') },
     gemeinsam: { bereich: 'gemeinsam', titel: 'Gemeinsam – Kai & Natalie', konten: gKonten, buchungen: gm, kosten, einnahmen, toepfe: [], limits, soll: [],
       kontostaende: ks(gem), regeln: [], kategorien,
-      einstellungen: einstellungen('gemeinsam', [{ schluessel: 'Sparraten Tagesgeld', wert: String(sparraten), erklaerung: 'Summe der Sparraten aus Tagesgeld.xlsx (für die Aufteilung). Die App hält den Wert aktuell.' }]) },
+      einstellungen: einstellungen('gemeinsam', [{ schluessel: 'Sparraten Tagesgeld', wert: sparraten, erklaerung: 'Summe der Sparraten aus Tagesgeld.xlsx (für die Aufteilung). Die App hält den Wert aktuell.' }]) },
   };
 }
 
