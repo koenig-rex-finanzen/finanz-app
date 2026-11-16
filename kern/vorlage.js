@@ -262,7 +262,7 @@ export function dateiBauen(d) {
   for (const name of GRUNDBLAETTER) if (!fertig[name]) fertig[name] = tabellenBlatt(name, daten[name] || []).b;
   const blaetter = GRUNDBLAETTER.map((n) => fertig[n]);
   for (const z of d.zusatz || []) blaetter.splice(blaetter.length - 2, 0, z);
-  return mappeSchreiben({ titel: d.titel, blaetter, namen: [...ue.namen, ...li.namen, ...(d.namen || [])], fremdeStile: d.fremdeStile });
+  return mappeSchreiben({ titel: d.titel, blaetter, namen: [...ue.namen, ...li.namen, ...(d.namen || [])], fremdeStile: d.fremdeStile, metadata: d.metadata });
 }
 
 /** Zusatzblatt mit fester Tabelle (kern/format.js ZUSATZ_TABELLEN), z. B. „Offene Punkte“, „TR Buchungen“. */

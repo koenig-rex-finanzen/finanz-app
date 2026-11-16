@@ -8,8 +8,8 @@ import { kern, r2, kontostand as neuStand } from './einheit.js';
 import { SPRIT_MUSTER, toepfeStand as altToepfe, kontostand as altKontostand, monatsansicht } from './rechnen.js';
 import * as P from './privat.js';
 import * as K from './kai.js';
-import { entpacken, blaetterVorbereiten, spaltenUmschreiben } from './blattkopie.js';
-import { ERSTE_ZEILE, BLAETTER } from './format.js';
+import { entpacken, blaetterVorbereiten, spaltenUmschreiben, chooseColsUmschreiben } from './blattkopie.js';
+import { ERSTE_ZEILE, BLAETTER, spalten } from './format.js';
 
 const MONATSNAMEN = ['januar', 'februar', 'märz', 'april', 'mai', 'juni', 'juli', 'august', 'september', 'oktober', 'november', 'dezember'];
 /** „03.07.“ → {monat:7, tag:3}, „Oktober“ → {monat:10}, „Monatsanfang“ → {tag:1}. */
@@ -262,6 +262,12 @@ export function vergleichKai(k, neu, heute) {
 const JAHR_TEXTE = { 'Wohnen & Haushalt': 'Haushalt', Autos: 'Auto', 'Abos & Telefon': 'Abos', 'Persönliches': 'ohne Kategorie' };
 /** Alte Spalten → neue Spalten (gemeinsame Datei). Buchungen bleiben gleich (C, D, G, H, P liegen an derselben Stelle). */
 const SPALTEN_GEMEINSAM = { Kosten: { G: 'N', M: 'L', N: 'M' }, Einnahmen: { H: 'M', I: 'N' } };
+// Alte Spaltenreihenfolge der Tabellen (für CHOOSECOLS in Überweisung/Aufteilung)
+const ALT_TABELLEN = {
+  tblKosten: ['ID', 'Posten', 'Bereich', 'Betrag', 'Rhythmus', 'Fällig', 'Monatswert', 'Bezahlt aus (Konto)', 'Kontorolle', 'Topf', 'Vertrag auf', 'Status', 'Ab (Monat)', 'Bis (Monat)', 'Bemerkung', 'Abbuchungstag'],
+  tblEinnahmen: ['ID', 'Posten', 'Bereich', 'Betrag', 'Eingang (wann)', 'Konto (Eingang)', 'Gilt für', 'Ab (Monat)', 'Bis (Monat)', 'Status', 'Bemerkung', 'Tag (verfügbar ab)', 'Gehört zu'],
+};
+const UMBENANNT = { Bereich: 'Kategorie', Fällig: 'Fällig (Monat)' };
 
 /**
  * Aufteilung, Überweisung, Kredite, Jahr aus der alten gemeinsamen Datei.
@@ -274,6 +280,10 @@ export async function zusatzGemeinsam(altBytes, daten) {
   const hinweise = [];
   const formel = (blatt, f) => {
     let x = f.replace(/SUM\(tblToepfe\[Sparrate \/ Monat\]\)/g, 'SparratenTagesgeld');
+    x = chooseColsUmschreiben(x, {
+      tblKosten: { alt: ALT_TABELLEN.tblKosten, neu: spalten('Kosten').map((c) => c.name), umbenannt: UMBENANNT },
+      tblEinnahmen: { alt: ALT_TABELLEN.tblEinnahmen, neu: spalten('Einnahmen').map((c) => c.name), umbenannt: UMBENANNT },
+    }, (t) => hinweise.push(`${blatt}: ${t}`));
     if (/tblToepfe/.test(x)) hinweise.push(`${blatt}: Formel verweist noch auf die Töpfe: ${x.slice(0, 80)}`);
     if (blatt === 'Jahr') {
       x = x.replace(/(Einnahmen|Kosten)!\$C(\$\d+):\$C(\$\d+)<>""/g, '$1!$B$2:$B$3<>""');
@@ -282,7 +292,7 @@ export async function zusatzGemeinsam(altBytes, daten) {
     }
     return x;
   };
-  const { blaetter, fremdeStile, fehlend } = blaetterVorbereiten(z, ['Überweisung', 'Aufteilung', 'Kredite', 'Jahr'], { formel, texte: { Jahr: JAHR_TEXTE } });
+  const { blaetter, fremdeStile, metadata, fehlend } = blaetterVorbereiten(z, ['Überweisung', 'Aufteilung', 'Kredite', 'Jahr'], { formel, texte: { Jahr: JAHR_TEXTE } });
   for (const f of fehlend) hinweise.push(`Blatt ${f} fehlt in der alten Datei`);
   const zeile = ERSTE_ZEILE + daten.einstellungen.findIndex((e) => e.schluessel === 'Sparraten Tagesgeld');
   const kb = BLAETTER.Konten.zeilen + ERSTE_ZEILE - 1;
@@ -291,12 +301,12 @@ export async function zusatzGemeinsam(altBytes, daten) {
     { name: 'kVisa', ref: `INDEX('Konten'!$B$5:$B$${kb},MATCH("KT02",'Konten'!$A$5:$A$${kb},0))` },
     { name: 'SparratenTagesgeld', ref: `'Einstellungen'!$B$${zeile}` },
   ];
-  return { zusatz: blaetter, fremdeStile, namen, hinweise };
+  return { zusatz: blaetter, fremdeStile, metadata, namen, hinweise };
 }
 
 /** Depot aus Kai_Privat.xlsx (verweist nur auf „TR Buchungen“, das gleich aufgebaut bleibt). */
 export async function zusatzKai(altBytes) {
   const z = await entpacken(altBytes);
-  const { blaetter, fremdeStile, fehlend } = blaetterVorbereiten(z, ['Depot']);
-  return { zusatz: blaetter, fremdeStile, namen: [], hinweise: fehlend.map((f) => `Blatt ${f} fehlt`) };
+  const { blaetter, fremdeStile, metadata, fehlend } = blaetterVorbereiten(z, ['Depot']);
+  return { zusatz: blaetter, fremdeStile, metadata, namen: [], hinweise: fehlend.map((f) => `Blatt ${f} fehlt`) };
 }

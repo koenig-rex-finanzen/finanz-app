@@ -66,7 +66,8 @@ export function blaetterVorbereiten(z, namen, opt = {}) {
     xml = xml.replace(/<legacyDrawing\b[^>]*\/>/g, '').replace(/<legacyDrawingHF\b[^>]*\/>/g, '');
     blaetter.push({ name, kopie: { xml, strings, textMap: opt.texte?.[name] || null, teile } });
   }
-  return { blaetter, fremdeStile: z['xl/styles.xml'], fehlend };
+  // Teil für neuere Formeln (FILTER, LET …): Zellen mit cm="…" brauchen ihn
+  return { blaetter, fremdeStile: z['xl/styles.xml'], metadata: z['xl/metadata.xml'] || null, fehlend };
 }
 
 /** Ersetzt in einer Formel Spaltenbuchstaben eines Blatts nach Zuordnung, z. B. {Kosten: {G: 'N'}}. */
@@ -78,4 +79,43 @@ export function spaltenUmschreiben(formel, zuordnung) {
     const n1 = map[c1] || c1; const n2 = c2 ? map[c2] || c2 : null;
     return `${vor}!${d1}${n1}${r1}` + (c2 ? `:${d2}${n2}${r2}` : '');
   });
+}
+
+/**
+ * Rechnet CHOOSECOLS(…tblX[]…, 2, 5, 4) auf eine neue Spaltenreihenfolge um.
+ * @param {string} formel
+ * @param {Object<string, {alt: string[], neu: string[], umbenannt?: Object<string,string>}>} tabellen
+ * @param {(text: string) => void} [hinweis]
+ */
+export function chooseColsUmschreiben(formel, tabellen, hinweis = () => {}) {
+  let out = ''; let i = 0;
+  const key = 'CHOOSECOLS(';
+  while (true) {
+    const p = formel.indexOf(key, i);
+    if (p < 0) { out += formel.slice(i); break; }
+    const start = p + key.length;
+    // erstes Argument bis zum Komma auf Ebene 0
+    let tiefe = 0, j = start, inText = false;
+    for (; j < formel.length; j++) {
+      const c = formel[j];
+      if (c === '"') inText = !inText;
+      if (inText) continue;
+      if (c === '(' || c === '[') tiefe++;
+      else if (c === ')' || c === ']') tiefe--;
+      else if (c === ',' && tiefe === 0) break;
+    }
+    const arg = formel.slice(start, j);
+    const m = formel.slice(j).match(/^((?:,\s*\d+)+)\)/);
+    const tab = Object.keys(tabellen).find((t) => arg.includes(t + '['));
+    if (!m || !tab) { out += formel.slice(i, j); i = j; continue; }
+    const t = tabellen[tab];
+    const neu = m[1].split(',').slice(1).map((x) => {
+      const name = t.alt[+x - 1]; const ziel = t.umbenannt?.[name] ?? name; const k = t.neu.indexOf(ziel);
+      if (k < 0) { hinweis(`CHOOSECOLS: Spalte „${name}“ gibt es in ${tab} nicht mehr`); return x.trim(); }
+      return String(k + 1);
+    });
+    out += formel.slice(i, j) + ',' + neu.join(',') + ')';
+    i = j + m[0].length;
+  }
+  return out;
 }

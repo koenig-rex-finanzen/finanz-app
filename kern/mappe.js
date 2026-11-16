@@ -198,6 +198,11 @@ export function mappeSchreiben(m) {
   const n = m.blaetter.length;
   wbRels.push(`<Relationship Id="rId${n + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`);
   wbRels.push(`<Relationship Id="rId${n + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>`);
+  if (m.metadata) {
+    wbRels.push(`<Relationship Id="rId${n + 3}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata" Target="metadata.xml"/>`);
+    ct.push('<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>');
+    dateien.push(['xl/metadata.xml', m.metadata]);
+  }
   ct.push('<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>');
   dateien.push(['xl/sharedStrings.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${sst.liste.length}" uniqueCount="${sst.liste.length}">${sst.liste.map((t) => `<si><t xml:space="preserve">${esc(t)}</t></si>`).join('')}</sst>`]);
