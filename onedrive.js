@@ -520,3 +520,35 @@ export async function sicherungAnlegen(ort, anlass) {
   }
   throw new Error('Die Sicherungskopie wurde nicht rechtzeitig fertig. Es wurde nichts geändert.');
 }
+
+// ---------------------------------------------------------------- Für das einheitliche Format (app/datei.js, Umzug)
+/** Graph-Abfrage, die bei „nicht gefunden“ null liefert. */
+export const graphRoh = (pfad) => graph(pfad).catch(nurFehlend);
+/** Ordner im eigenen OneDrive über seinen Pfad. */
+export async function ordnerAusPfad(pfad) {
+  const it = await graph(`/me/drive/root:/${pfadKodiert(pfad)}?$select=id,name,folder,parentReference`).catch(nurFehlend);
+  return it?.folder ? { driveId: it.parentReference.driveId, itemId: it.id } : null;
+}
+/** Lädt eine neue Datei in einen Ordner. Bricht ab, wenn es den Namen schon gibt (überschreibt nie). */
+export async function dateiNeu(ordner, name, bytes) {
+  const r = await rohAnfrage(`/drives/${ordner.driveId}/items/${ordner.itemId}:/${encodeURIComponent(name)}:/content?@microsoft.graph.conflictBehavior=fail`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes });
+  if (r.status === 401) throw new AnmeldungNoetig();
+  if (r.status === 409) throw new Error(`„${name}“ gibt es schon. Es wurde nichts überschrieben.`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error?.message || `Hochladen fehlgeschlagen (${r.status})`);
+  return { driveId: j.parentReference?.driveId || ordner.driveId, itemId: j.id, eTag: j.eTag, webUrl: j.webUrl };
+}
+/** Lädt eine Datei über ihren Pfad im eigenen OneDrive (für den Umzug: Archiv-Kopien). */
+export async function pfadLaden(pfad) {
+  const r = await rohAnfrage(`/me/drive/root:/${pfadKodiert(pfad)}:/content`);
+  if (r.status === 401) throw new AnmeldungNoetig();
+  if (!r.ok) throw new Error(`${pfad} konnte nicht geladen werden (${r.status}).`);
+  return new Uint8Array(await r.arrayBuffer());
+}
+/** Ersetzt den Inhalt einer bestehenden Datei (nur für Testdateien des Umzugs). */
+export async function dateiErsetzen(ort, bytes) {
+  const r = await rohAnfrage(`/drives/${ort.driveId}/items/${ort.itemId}/content`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes });
+  if (r.status === 401) throw new AnmeldungNoetig();
+  if (!r.ok) throw new Error(`Ersetzen fehlgeschlagen (${r.status})`);
+}
