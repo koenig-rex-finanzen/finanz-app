@@ -39,21 +39,8 @@ async function entpacken(buf, dv, e) {
   const daten = buf.subarray(start, start + e.groesseKomp);
   if (e.methode === 0) return daten;
   if (e.methode !== 8) throw new Error('Unbekannte Kompression in der Excel-Datei.');
-  return entpackeRoh(daten);
-}
-
-/** deflate-raw entpacken – direkt über den Strom (ohne Blob: der ist auf manchen Rechnern sehr langsam). */
-export async function entpackeRoh(daten) {
-  const ds = new DecompressionStream('deflate-raw');
-  const w = ds.writable.getWriter();
-  w.write(daten).catch(() => {}); w.close().catch(() => {});
-  const r = ds.readable.getReader();
-  const teile = []; let n = 0;
-  for (;;) { const { done, value } = await r.read(); if (done) break; teile.push(value); n += value.length; }
-  if (teile.length === 1) return teile[0];
-  const aus = new Uint8Array(n); let p = 0;
-  for (const t of teile) { aus.set(t, p); p += t.length; }
-  return aus;
+  const strom = new Blob([daten]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(strom).arrayBuffer());
 }
 
 const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };

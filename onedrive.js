@@ -14,15 +14,12 @@ export class Doppelt extends Error {
 // Bei der Suche: „nicht da“ ist okay, aber Anmeldung/Netz-Probleme müssen durchgereicht werden
 const nurFehlend = (e) => { if (e instanceof AnmeldungNoetig || e instanceof KeinNetz) throw e; return null; };
 
-// Zeitgrenze: Antwortet OneDrive nicht, wird die Anfrage abgebrochen (statt ewig zu warten)
-const ZEIT = 120000;
-const mitZeit = (opts) => (opts.signal || typeof AbortSignal === 'undefined' || !AbortSignal.timeout ? opts : { ...opts, signal: AbortSignal.timeout(ZEIT) });
 async function graph(pfad, { roh = false, ...opts } = {}) {
   let t;
   try { t = await token(); } catch { throw new KeinNetz(); }
   if (!t) throw new AnmeldungNoetig();
   let r;
-  try { r = await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, mitZeit({ ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } })); }
+  try { r = await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, { ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } }); }
   catch { throw new KeinNetz(); }
   if (r.status === 401) throw new AnmeldungNoetig();
   if (roh) { if (!r.ok) throw new Error(`OneDrive meldet Fehler ${r.status}`); return r; }
@@ -238,7 +235,6 @@ export async function mitSitzung(ort, arbeit) {
     lies: (blatt, adresse) => graph(W + `/worksheets('${blatt}')/range(address='${adresse}')?$select=values`, { headers: S }),
     schreib: (blatt, adresse, values) => graph(W + `/worksheets('${blatt}')/range(address='${adresse}')`, json({ method: 'PATCH', headers: S, body: JSON.stringify({ values }) })),
     tabelle: (name) => graph(W + `/tables('${name}')/range?$select=address`, { headers: S }),
-    rechnen: () => graph(W + '/application/calculate', json({ method: 'POST', headers: S, body: '{"calculationType":"Full"}' })),
   };
   try { return await arbeit(api); } finally { await graph(W + '/closeSession', { method: 'POST', headers: S }).catch(() => {}); }
 }
@@ -353,7 +349,7 @@ async function rohAnfrage(pfad, opts = {}) {
   let t;
   try { t = await token(); } catch { throw new KeinNetz(); }
   if (!t) throw new AnmeldungNoetig();
-  try { return await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, mitZeit({ cache: 'no-store', ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } })); }
+  try { return await fetch(pfad.startsWith('http') ? pfad : GRAPH + pfad, { cache: 'no-store', ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } }); }
   catch { throw new KeinNetz(); }
 }
 
@@ -523,44 +519,4 @@ export async function sicherungAnlegen(ort, anlass) {
     if (da?.id && da.size > 0) return name;
   }
   throw new Error('Die Sicherungskopie wurde nicht rechtzeitig fertig. Es wurde nichts geändert.');
-}
-
-// ---------------------------------------------------------------- Für das einheitliche Format (app/datei.js, Umzug)
-/** Graph-Abfrage, die bei „nicht gefunden“ null liefert. */
-export const graphRoh = (pfad) => graph(pfad).catch(nurFehlend);
-/** Ordner im eigenen OneDrive über seinen Pfad. */
-export async function ordnerAusPfad(pfad) {
-  const it = await graph(`/me/drive/root:/${pfadKodiert(pfad)}?$select=id,name,folder,parentReference`).catch(nurFehlend);
-  return it?.folder ? { driveId: it.parentReference.driveId, itemId: it.id } : null;
-}
-/** Lädt eine neue Datei in einen Ordner. Bricht ab, wenn es den Namen schon gibt (überschreibt nie). */
-export async function dateiNeu(ordner, name, bytes) {
-  const r = await rohAnfrage(`/drives/${ordner.driveId}/items/${ordner.itemId}:/${encodeURIComponent(name)}:/content?@microsoft.graph.conflictBehavior=fail`, {
-    method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes });
-  if (r.status === 401) throw new AnmeldungNoetig();
-  if (r.status === 409) throw new Error(`„${name}“ gibt es schon. Es wurde nichts überschrieben.`);
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error?.message || `Hochladen fehlgeschlagen (${r.status})`);
-  return { driveId: j.parentReference?.driveId || ordner.driveId, itemId: j.id, eTag: j.eTag, webUrl: j.webUrl };
-}
-/** Lädt eine Datei über ihren Pfad im eigenen OneDrive (für den Umzug: Archiv-Kopien). */
-export async function pfadLaden(pfad) {
-  const r = await rohAnfrage(`/me/drive/root:/${pfadKodiert(pfad)}:/content`);
-  if (r.status === 401) throw new AnmeldungNoetig();
-  if (!r.ok) throw new Error(`${pfad} konnte nicht geladen werden (${r.status}).`);
-  return new Uint8Array(await r.arrayBuffer());
-}
-/** Ersetzt den Inhalt einer bestehenden Datei (nur für Testdateien des Umzugs). */
-export async function dateiErsetzen(ort, bytes) {
-  const r = await rohAnfrage(`/drives/${ort.driveId}/items/${ort.itemId}/content`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes });
-  if (r.status === 401) throw new AnmeldungNoetig();
-  if (!r.ok) throw new Error(`Ersetzen fehlgeschlagen (${r.status})`);
-}
-/** Öffnet die Datei in einer Excel-Sitzung, rechnet alles neu und speichert (Formel-Ergebnisse stehen danach in der Datei). */
-export async function berechnen(ort) {
-  for (let i = 0; i < 6; i++) {
-    try {
-      return await mitSitzung(ort, (api) => api.rechnen());
-    } catch (e) { if (i === 5) throw e; await new Promise((r) => setTimeout(r, 4000)); }
-  }
 }

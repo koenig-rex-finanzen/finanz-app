@@ -64,21 +64,16 @@ export async function rueckkehrVerarbeiten() {
 }
 
 /** Gültiger Zugriffstoken oder null (dann muss neu angemeldet werden). */
-let erneuerung = null; // nur eine Erneuerung gleichzeitig (mehrere gleichzeitige Anfragen warten auf dieselbe)
 export async function token() {
   const t = lesen(SPEICHER);
   if (!t) return null;
   if (t.access && t.ablauf > Date.now()) return t.access;
   if (!t.refresh) return null;
-  if (erneuerung) return erneuerung;
-  erneuerung = (async () => {
-    try { return (await tokenAnfrage({ grant_type: 'refresh_token', refresh_token: t.refresh })).access; }
-    catch (e) {
-      if (e instanceof TypeError) throw e; // kein Netz: Anmeldung behalten
-      const k = t.konto; schreiben(SPEICHER, k ? { konto: k } : null); return null;
-    }
-  })();
-  try { return await erneuerung; } finally { erneuerung = null; }
+  try { return (await tokenAnfrage({ grant_type: 'refresh_token', refresh_token: t.refresh })).access; }
+  catch (e) {
+    if (e instanceof TypeError) throw e; // kein Netz: Anmeldung behalten
+    const k = t.konto; schreiben(SPEICHER, k ? { konto: k } : null); return null;
+  }
 }
 
 export function kontoMerken(konto) { const t = lesen(SPEICHER) || {}; t.konto = konto; schreiben(SPEICHER, t); }
