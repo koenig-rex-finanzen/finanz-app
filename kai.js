@@ -6,7 +6,8 @@ import { betragFinden, datumFinden } from './kern/verstehen.js';
 
 let C;
 const S = { status: 'aus', fehler: null, ort: null, item: null, k: null, tab: null, meldung: null, laedt: false,
-  suche: '', fMonat: '', fArt: '', offen: null, c24: null, tr: null, gelesen: null, topf: null, fWofuer: '', wZeit: 'monat' };
+  suche: '', fMonat: '', fArt: '', offen: null, c24: null, tr: null, gelesen: null, topf: null, fWofuer: '', wZeit: 'monat',
+  seite: null, anpassen: null, lueckeAuf: false };
 const h = (s) => C.h(s);
 const zahl = (t) => { const s = String(t ?? '').trim().replace(/\s|€/g, ''); if (!s) return NaN; return Math.round(Number(s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s) * 100) / 100; };
 const bt = (n) => (n == null || !isFinite(n) ? '' : Number(n).toFixed(2).replace('.', ','));
@@ -20,12 +21,30 @@ const TABS = [
   ['k-buchungen', 'Buchungen', '<path d="M5 6h14M5 12h14M5 18h9"/>'],
   ['k-toepfe', 'Töpfe', '<path d="M5 9h14l-1.5 10a1 1 0 01-1 .9h-9a1 1 0 01-1-.9z"/><path d="M8 9V7a4 4 0 018 0v2"/>'],
   ['k-depot', 'Depot', '<path d="M4 18l5-6 4 3 7-9"/><path d="M15 6h5v5"/>'],
-  ['k-mehr', 'Mehr', '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'],
+  ['k-mehr', 'Menü', '<path d="M4 7h16M4 12h16M4 17h16"/>'],
 ];
+/** Reiter, die zu einer abschaltbaren Funktion gehören. */
+const REITER_FUNKTION = { 'k-vorschau': 'vorschau', 'k-depot': 'depot' };
+const reiterAn = (id) => !REITER_FUNKTION[id] || K.funktionAn(einst(), REITER_FUNKTION[id]);
 const merk = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 const hol = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
 
+// ---------------------------------------------------------------- Einstellungen (Blatt „Einstellungen“, sonst nur auf diesem Gerät)
+const EINST_LOKAL = 'ug.keinst';
+/** Einstellungen: aus der Datei; was nur lokal gespeichert werden konnte (Schreiben gescheitert), geht vor. */
+function einst() { return { ...(S.k?.einstellungen || {}), ...(hol(EINST_LOKAL) || {}) }; }
+const kachelIds = () => K.KACHELN.map((x) => x.id);
+const kachelListe = () => K.kachelnOrdnen(einst().kacheln, kachelIds());
+/** Darstellung hell/dunkel gilt je Gerät. */
+const THEMA = 'ug.kthema';
+function themaSetzen(w) { merk(THEMA, w === 'auto' ? null : w); themaAnwenden(); }
+function themaAnwenden() { const w = hol(THEMA); if (w === 'hell') document.documentElement.dataset.theme = 'light'; else if (w === 'dunkel') document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme; }
+
 export function init(ctx) { C = ctx; S.tab = hol('ug.ktab') || 'k-uebersicht'; }
+/** Tab wechseln (auch auf ausgeschaltete Reiter nie). */
+function zuTab(id) { S.tab = reiterAn(id) ? id : 'k-uebersicht'; S.seite = null; merk('ug.ktab', S.tab); S.meldung = null; C.zeichne(); window.scrollTo(0, 0); }
+/** Nur für die Oberflächen-Prüfung mit erfundenen Daten (test/ui): Modell setzen, ohne OneDrive. */
+export function beispielSetzen(k) { S.k = k; S.status = 'bereit'; S.ort = { driveId: 'x', itemId: 'y' }; S.item = { eTag: '1' }; S.gelesen = new Date().toISOString(); }
 export function vergessen() { S.k = null; S.status = 'aus'; S.ort = null; }
 
 // ---------------------------------------------------------------- Laden
@@ -112,9 +131,52 @@ async function zeileVonNr(api, nr) {
   return von + i;
 }
 
+/** Neues Blatt (0.18.0) hinten anhängen, falls es fehlt. Vorher einmal Sicherungskopie der Datei. */
+async function blattSicherstellen(api, key) {
+  const d = K.NEUE_BLAETTER[key];
+  if ((await api.blaetter()).includes(d.name)) return false;
+  if (!S.gesichert) { await C.od.sicherungAnlegen(S.ort, 'vor-Blatt-' + d.name); S.gesichert = true; }
+  await api.blattNeu(d.name);
+  await api.schreib(d.name, 'A1', [[d.titel]]);
+  await api.schreib(d.name, `A4:${String.fromCharCode(64 + d.kopf.length)}4`, [d.kopf]);
+  return true;
+}
+/** Blockweise schreiben (eigene Blätter, Daten ab Zeile 5), Rest des Bereichs leeren. */
+async function blockSchreiben(api, key, zeilen) {
+  const d = K.NEUE_BLAETTER[key]; const [von, bis] = K.BEREICHE[key]; const sp = d.kopf.length;
+  if (zeilen.length > bis - von + 1) throw new Error(`Zu viele Einträge für das Blatt „${d.name}“.`);
+  const leer = Array(sp).fill('');
+  const werte = Array.from({ length: bis - von + 1 }, (_, i) => (zeilen[i] ? [...zeilen[i], ...leer].slice(0, sp) : leer));
+  await api.schreib(d.name, `A${von}:${String.fromCharCode(64 + sp)}${bis}`, werte);
+}
+/**
+ * Einstellungen speichern: sofort anwenden, dann ins Blatt „Einstellungen“ schreiben.
+ * Klappt das nicht, bleiben sie nur auf diesem Gerät (und es kommt ein Hinweis).
+ */
+async function einstSpeichern(neu, text) {
+  const lokal = { ...(hol(EINST_LOKAL) || {}), ...neu };
+  merk(EINST_LOKAL, lokal);
+  S.meldung = { art: 'info', text: text + ' Wird gespeichert …' }; C.zeichne();
+  const werte = einst();
+  if (S.schreibt) { S.meldung = { art: 'warn', text: text + ' Gerade läuft schon ein Speichern, deshalb vorerst nur auf diesem Gerät.' }; C.zeichne(); return; }
+  S.schreibt = true;
+  try {
+    await C.od.mitSitzung(S.ort, async (api) => {
+      await blattSicherstellen(api, 'einstellungen');
+      await blockSchreiben(api, 'einstellungen', Object.entries(werte).filter(([x]) => ['kacheln', 'funktionen', 'kategorien'].includes(x)).map(([x, w]) => [x, JSON.stringify(w)]));
+    });
+    S.k.einstellungen = { ...(S.k.einstellungen || {}), ...werte }; S.k.einstellungenBlatt = true; merk(EINST_LOKAL, null);
+    S.meldung = { art: 'info', text: text + ' In der Datei gespeichert.' };
+  } catch (e) {
+    S.meldung = { art: 'warn', text: `${text} Nur auf diesem Gerät gespeichert (Datei: ${e.message}).` };
+  } finally { S.schreibt = false; C.zeichne(); }
+}
+const limitZeilen = (liste) => liste.filter((l) => l.kategorie && l.betrag > 0).map((l) => [l.kategorie, l.betrag, l.bemerkung || '']);
+
 // ---------------------------------------------------------------- Zeichnen
 export function zeichne() {
   document.documentElement.dataset.bereich = 'kai';
+  themaAnwenden();
   const kopf = C.kopf();
   const wahl = (inhalt, nav = true) => { C.app.innerHTML = `${kopf}<main class="wrap meins kai">${inhalt}</main>${nav ? navHtml() : ''}`; };
   if (S.status === 'aus' || (S.laedt && !S.k)) { wahl('<div class="leer m-laedt">Mein Geld wird geladen …</div>', false); if (S.status === 'aus') laden(); return; }
@@ -126,11 +188,12 @@ export function zeichne() {
   if (S.status === 'fehler' && !S.k) { wahl(`<div class="hinweis warn">${h(S.fehler)}</div><button class="knopf" data-k="neu-laden">Noch mal versuchen</button>`, false); return; }
   const r = K.rechneKai(S.k, C.heute());
   const meld = (S.fehler ? `<div class="hinweis info">${h(S.fehler)}</div>` : '') + (S.meldung ? `<div class="hinweis ${S.meldung.art}">${h(S.meldung.text)}</div>` : '');
+  if (!reiterAn(S.tab)) S.tab = 'k-uebersicht';
   const f = { 'k-ausgaben': ausgabenAnsicht, 'k-uebersicht': uebersicht, 'k-vorschau': vorschau, 'k-buchungen': buchungen, 'k-toepfe': toepfeAnsicht, 'k-depot': depotAnsicht, 'k-mehr': mehr }[S.tab] || uebersicht;
   wahl(meld + f(r));
   if (['k-uebersicht', 'k-buchungen'].includes(S.tab) || (S.tab === 'k-toepfe' && !S.topf)) C.app.insertAdjacentHTML('beforeend', '<button class="fab" data-k="eintragen" aria-label="Buchung eintragen"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Eintragen</button>');
 }
-const navHtml = () => `<nav class="sechs"><div class="wrap" role="tablist">${TABS.map(([id, n, p]) => `<button role="tab" aria-selected="${S.tab === id}" data-k="tab" data-arg="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>${n}</button>`).join('')}</div></nav>`;
+const navHtml = () => { const t = TABS.filter(([id]) => reiterAn(id)); return `<nav class="${['', '', '', '', 'vier', 'fuenf', 'sechs'][t.length] || 'sechs'}"><div class="wrap" role="tablist">${t.map(([id, n, p]) => `<button role="tab" aria-selected="${S.tab === id}" data-k="tab" data-arg="${id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>${n}</button>`).join('')}</div></nav>`; };
 
 /** Soll laut gemeinsamer Datei (Aufteilung, „Kai → Gemeinschaftskonto“) – nur gelesen. */
 function sollGemeinsam() {
@@ -149,31 +212,58 @@ function uebersicht(r) {
   if (r.fehlt) {
     return `<section class="k-warn"><b>Kontostand fehlt</b><p>Ohne den Stand vom c24-Konto zum Stichtag kann die App nicht rechnen.</p><button class="knopf hell" data-k="konto">Kontostand eintragen</button></section>${planIstHtml()}`;
   }
-  const luecke = r.status === 'Lücke';
-  const warn = luecke ? `<section class="k-warn" role="alert"><span class="k-warn-symbol" aria-hidden="true">!</span>
-    <b>Im ${h(mn(r.ersterMinusMonat, false))} fehlen ${eur(r.fehlbetrag)}.</b>
-    <p>${r.behalten > 0 ? `Behalte diesen Monat ${eur(r.behalten)} übrig.` : 'Auch ohne variable Ausgaben reicht es nicht – schau in die Vorschau.'}</p>
-    ${budgetDrueberText()}
-    ${r.inRuecklage > 0 ? `<button class="knopf hell" data-k="ruecklage">${eur(r.inRuecklage)} in Rücklage legen</button>` : ''}</section>` : '';
   const abw = sollAbweichungen();
   const sollHinweis = abw.length ? `<div class="hinweis warn">Das Soll aufs Gemeinschaftskonto hat sich in der gemeinsamen Datei geändert (${abw.length > 3 ? `${abw.length} Monate, ab ${mn(abw[0].monat)}` : abw.map((a) => mn(a.monat, false)).join(', ')}). <button class="link" data-k="soll-uebernehmen">Übernehmen</button></div>` : '';
-  const zeilen = r.vorschau.filter((v) => v.imHorizont);
-  return `${kontostaende(r)}${warn}${sollHinweis}
-    <div class="k-hero"><div class="k-hero-oben"><span>Frei</span><span class="k-ampel ${luecke ? 'rot' : 'gruen'}">${luecke ? 'Lücke' : '✓ Alles gedeckt'}</span></div>
+  const kacheln = { konten: () => kontostaende(r), frei: () => freiKachel(r), luecke: () => lueckeKachel(r), empfehlung: () => empfehlungKachel(r),
+    monate: () => monateKachel(r), kategorien: () => wofuerHtml(), planist: () => planIstHtml(), spartopf: () => spartopfHinweis(r) };
+  const inhalt = kachelListe().filter((x) => x.an).map((x) => kacheln[x.id]?.() || '').join('');
+  return `${sollHinweis}${inhalt}
+    <div class="k-anpassen-zeile"><button class="knopf leise klein" data-k="anpassen">Anpassen</button></div>
+    <p class="hint">Stichtag ${dl(r.stichtag)} · letzte Buchung ${dl(r.letzteBuchung) || '–'} · geladen ${S.gelesen ? new Date(S.gelesen).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '–'}</p>`;
+}
+/** Feste Kachel „Frei“. Das Badge „Lücke“ steht hier immer, auch wenn die Hinweis-Kachel ausgeblendet ist. */
+function freiKachel(r) {
+  const luecke = r.status === 'Lücke';
+  return `<div class="k-hero"><div class="k-hero-oben"><span>Frei</span><span class="k-ampel ${luecke ? 'rot' : 'gruen'}">${luecke ? 'Lücke' : '✓ Alles gedeckt'}</span></div>
       <div class="k-gross ${r.frei < 0 ? 'neg' : ''}">${eur(r.frei)}</div>
-      <div class="k-hero-zeilen"><span>Kontostände <b>${eur(Math.round((r.stand + (r.spartopf?.stand || 0)) * 100) / 100)}</b></span><span>verplant in Töpfen <b>${eur(r.verplant)}</b></span><span>Rücklage <b>${eur(r.ruecklage)}</b></span></div></div>
-    <section><h2>Empfehlung für ${h(mn(r.akt, false))}</h2><div class="rechnung">
+      <div class="k-hero-zeilen"><span>Kontostände <b>${eur(Math.round((r.stand + (r.spartopf?.stand || 0)) * 100) / 100)}</b></span><span>verplant in Töpfen <b>${eur(r.verplant)}</b></span><span>Rücklage <b>${eur(r.ruecklage)}</b></span></div></div>`;
+}
+const AUSLOESER = { 'frei-ende': '„Frei am Monatsende“ fällt unter 0', variabel: '„Frei für Variables“ fällt unter 0', beides: '„Frei am Monatsende“ und „Frei für Variables“ fallen unter 0' };
+/** Hinweis-Kachel „Lücke“: ruhig, ausklappbar, nur wenn es eine Lücke gibt (ab 0,01 €). */
+function lueckeKachel(r) {
+  const d = K.lueckeDetails(r, S.k);
+  if (!d) return '';
+  const erster = d.monate[0];
+  const weitere = d.monate.length > 1 ? ` und ${d.monate.length - 1} weitere${d.monate.length > 2 ? '' : 'r'} Monat${d.monate.length > 2 ? 'e' : ''}` : '';
+  const posten = (m) => m.posten.length ? `<div class="k-lh-posten">${m.posten.map((p) => `<div class="k-pp"><span>${h(p.name)}<small>${h(p.art)}${p.tag ? ` · am ${p.tag}.` : ''}</small></span><b>${eur(p.betrag)}</b></div>`).join('')}</div>`
+    : '<p class="hint">In diesem Monat kommt nichts Geplantes mehr. Die Lücke entsteht aus dem Stand davor.</p>';
+  return `<section class="k-lh" aria-label="Hinweis: Lücke"><button class="k-lh-kopf" data-k="luecke-auf" aria-expanded="${S.lueckeAuf}">
+      <span class="k-lh-symbol" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4M12 17.5v.01"/></svg></span>
+      <span class="k-lh-text"><b data-hilfe-schluessel="Hinweis: Lücke">Hinweis: Lücke</b><span>Im ${h(mn(erster.monat, false))} fehlen ${eur(erster.fehlbetrag)}${weitere}.${d.behalten > 0 ? ` Behalte diesen Monat ${eur(d.behalten)} übrig.` : ''}</span></span>
+      <span class="k-lh-pfeil" aria-hidden="true">${S.lueckeAuf ? '▴' : '▾'}</span></button>
+    ${S.lueckeAuf ? `<div class="k-lh-detail">
+      <h3>Betroffene Monate</h3><div class="k-lh-monate">${d.monate.map((m) => `<button class="k-pp k-lh-monat" data-k="vmonat-auf" data-arg="${m.monat}"><span>${h(mn(m.monat))}<small>${h(AUSLOESER[m.ausloeser])}</small></span><b class="neg">−${eur(m.fehlbetrag)}</b></button>`).join('')}</div>
+      <div class="rechnung"><div class="rz"><span>Tiefster Punkt<small>Frei am Monatsende, ${h(mn(d.tiefster.monat))}</small></span><b class="${d.tiefster.betrag < 0 ? 'neg' : ''}">${eur(d.tiefster.betrag)}</b></div></div>
+      <h3>Woher kommt es (${h(mn(erster.monat, false))})</h3><p class="hint">Die größten Posten, die in dem Monat noch kommen (Rest-Plan wie in der Vorschau).</p>${posten(erster)}
+      ${d.monate.slice(1).map((m) => `<details class="k-lh-mehr"><summary>${h(mn(m.monat))}: größte Posten</summary>${posten(m)}</details>`).join('')}
+      <h3>Empfehlung</h3><p>${d.behalten > 0 ? `Behalte diesen Monat <b>${eur(d.behalten)}</b> übrig.` : 'Auch ohne variable Ausgaben reicht es nicht. Schau in die Vorschau, welche Posten du verschieben kannst.'}</p>
+      ${d.inRuecklage > 0 ? `<button class="knopf leise klein" data-k="ruecklage">${eur(d.inRuecklage)} in Rücklage legen</button>` : ''}
+      <p class="hint" style="margin-top:8px">Monat antippen öffnet ihn in der Vorschau.</p></div>` : ''}</section>`;
+}
+function empfehlungKachel(r) {
+  const luecke = r.status === 'Lücke';
+  return `<section><h2>Empfehlung für ${h(mn(r.akt, false))}</h2><div class="rechnung">
       <div class="rz"><span>Bis Monatsende behalten<small>damit die nächsten Monate gedeckt sind</small></span><b>${eur(r.behalten)}</b></div>
       <div class="rz"><span>Davon noch in die Rücklage<small>Topf „${h(K.RUECKLAGE)}“, Stand ${eur(r.ruecklage)}</small></span><b>${eur(r.inRuecklage)}</b></div>
       <div class="rz summe"><span>Frei für Variables diesen Monat</span><b class="${r.variabel < 0 ? 'neg' : ''}">${eur(r.variabel)}</b></div></div>
-      ${r.inRuecklage > 0 && !luecke ? `<button class="knopf leise" style="margin-top:10px" data-k="ruecklage">${eur(r.inRuecklage)} in Rücklage legen</button>` : ''}</section>
-    <section><h2>Die nächsten ${r.horizont} Monate</h2><div class="k-tabelle"><div class="k-tz kopf"><span>Monat</span><span>Frei am Ende</span><span>Behalten</span><span>Variables</span></div>
-      ${zeilen.map((v) => `<button class="k-tz ${v.status === 'Lücke' ? 'luecke' : ''}" data-k="vmonat" data-arg="${v.monat}"><span>${h(mn(v.monat, false))}${v.status === 'Lücke' ? ' ⚠' : ''}</span><span class="${v.freiEnde < 0 ? 'neg' : ''}">${eur(v.freiEnde)}</span><span>${eur(v.behalten)}</span><span class="${v.variabel < 0 ? 'neg' : ''}">${eur(v.variabel)}</span></button>`).join('')}</div>
-      <p class="hint" style="margin-top:6px">Ohne variable Ausgaben gerechnet. Antippen zeigt die Posten.</p></section>
-    ${wofuerHtml()}
-    ${planIstHtml()}
-    ${spartopfHinweis(r)}
-    <p class="hint">Stichtag ${dl(r.stichtag)} · letzte Buchung ${dl(r.letzteBuchung) || '–'} · geladen ${S.gelesen ? new Date(S.gelesen).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '–'}</p>`;
+      ${r.inRuecklage > 0 && !luecke ? `<button class="knopf leise" style="margin-top:10px" data-k="ruecklage">${eur(r.inRuecklage)} in Rücklage legen</button>` : ''}</section>`;
+}
+function monateKachel(r) {
+  const zeilen = r.vorschau.filter((v) => v.imHorizont);
+  const vor = K.funktionAn(einst(), 'vorschau');
+  return `<section><h2>Die nächsten ${r.horizont} Monate</h2><div class="k-tabelle"><div class="k-tz kopf"><span>Monat</span><span>Frei am Ende</span><span>Behalten</span><span>Variables</span></div>
+      ${zeilen.map((v) => `<${vor ? `button data-k="vmonat" data-arg="${v.monat}"` : 'div'} class="k-tz ${v.status === 'Lücke' ? 'luecke' : ''}"><span>${h(mn(v.monat, false))}${v.status === 'Lücke' ? ' ⚠' : ''}</span><span class="${v.freiEnde < 0 ? 'neg' : ''}">${eur(v.freiEnde)}</span><span>${eur(v.behalten)}</span><span class="${v.variabel < 0 ? 'neg' : ''}">${eur(v.variabel)}</span></${vor ? 'button' : 'div'}>`).join('')}</div>
+      <p class="hint" style="margin-top:6px">Ohne variable Ausgaben gerechnet.${vor ? ' Antippen zeigt die Posten.' : ''}</p></section>`;
 }
 /** Name wie in der c24-App: „c24 Smartkonto“ und „Spartopf“. */
 const anzeigeName = (name) => (name === S.k.konto.name ? 'c24 Smartkonto' : String(name).replace(/^c24\s+/i, ''));
@@ -189,15 +279,9 @@ function kontostaende(r) {
     ${konten.map(({ kt, stand }) => `<div class="k-konto-zeile"><span>${h(anzeigeName(kt.name))}</span><b class="${stand < 0 ? 'neg' : ''}">${stand == null ? 'Stand fehlt' : eur(stand)}</b></div>`).join('')}
     ${konten.length > 1 ? `<div class="k-konto-zeile summe"><span>Zusammen</span><b>${eur(Math.round(konten.reduce((a, x) => a + (x.stand || 0), 0) * 100) / 100)}</b></div>` : ''}
     <p class="k-konten-fuss">Berechnet aus deinen Buchungen bis ${dl(r.letzteBuchung) || '–'}${p ? ` · zuletzt verglichen ${new Date(p.zeit).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })} ${new Date(p.zeit).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : ''}</p>
-    <button class="knopf hell" data-k="pruefen">Mit Bank-App vergleichen</button></section>`;
+    <button class="knopf hell" data-k="pruefen">Kontostand prüfen</button></section>`;
 }
-/** „Über Budget: Dampfen +30,00 €“ für die Warnung (nur laufender Monat). */
-function budgetDrueberText() {
-  const akt = C.heute().slice(0, 7);
-  const d = K.budgets(S.k).map((x) => K.budgetStand(S.k, x, akt, C.heute())).filter((b) => b.drueber > 0);
-  return d.length ? `<p><span class="k-warn-budget">Über Budget:</span> ${d.map((b) => `${h(b.name)} +${eur(b.drueber)}`).join(', ')}. <button class="link hell" data-k="ausgaben">Ansehen</button></p>` : '';
-}
-/** Ring für ein Budget: äußerer Ring = verbraucht vom Plan, innerer roter Ring = was darüber hinausgeht, Strich = heute. */
+/** Ring für ein Limit: äußerer Ring = verbraucht vom Limit, innerer roter Ring = was darüber hinausgeht, Strich = heute. */
 function budgetRing(b, gross = true) {
   const g = gross ? 136 : 64, sw = gross ? 13 : 7, r1 = (g - sw) / 2, r2 = r1 - sw - (gross ? 4 : 2), c = g / 2;
   const U1 = 2 * Math.PI * r1, U2 = 2 * Math.PI * r2;
@@ -208,21 +292,24 @@ function budgetRing(b, gross = true) {
   return `<svg class="k-ring ${b.drueber > 0 ? 'drueber' : ''}" width="${g}" height="${g}" viewBox="0 0 ${g} ${g}" role="img" aria-label="${h(b.name)}: ${eur(b.verbraucht)} von ${eur(b.plan)} verbraucht">
     <circle cx="${c}" cy="${c}" r="${r1}" class="k-ring-spur" stroke-width="${sw}" fill="none"/>
     <circle cx="${c}" cy="${c}" r="${r1}" class="k-ring-wert" stroke-width="${sw}" fill="none" stroke-linecap="round" stroke-dasharray="${(teil * U1).toFixed(2)} ${U1.toFixed(2)}" transform="rotate(-90 ${c} ${c})"><title>verbraucht ${eur(b.verbraucht)} von ${eur(b.plan)}</title></circle>
-    ${ueber > 0 ? `<circle cx="${c}" cy="${c}" r="${r2}" class="k-ring-ueber" stroke-width="${sw}" fill="none" stroke-linecap="round" stroke-dasharray="${(ueber * U2).toFixed(2)} ${U2.toFixed(2)}" transform="rotate(-90 ${c} ${c})"><title>${eur(b.drueber)} über Budget</title></circle>` : ''}
+    ${ueber > 0 ? `<circle cx="${c}" cy="${c}" r="${r2}" class="k-ring-ueber" stroke-width="${sw}" fill="none" stroke-linecap="round" stroke-dasharray="${(ueber * U2).toFixed(2)} ${U2.toFixed(2)}" transform="rotate(-90 ${c} ${c})"><title>${eur(b.drueber)} über dem Limit</title></circle>` : ''}
     ${strich}
     ${gross ? `<text x="${c}" y="${c - 2}" text-anchor="middle" class="k-ring-zahl">${h(eur(b.verbraucht).replace(/,00 €$/, ' €'))}</text><text x="${c}" y="${c + 17}" text-anchor="middle" class="k-ring-von">von ${h(eur(b.plan).replace(/,00 €$/, ' €'))}</text>` : ''}</svg>`;
 }
-function budgetText(b, lauf) {
+function limitText(b, lauf) {
   const restTage = lauf ? (() => { const h0 = C.heute(); const t = new Date(Date.UTC(+h0.slice(0, 4), +h0.slice(5, 7), 0)).getUTCDate(); return t - Number(h0.slice(8, 10)); })() : 0;
-  if (b.drueber > 0) return `<span class="k-b-status rot">⚠ ${eur(b.drueber)} über Budget</span>`;
-  if (lauf && b.verbraucht > b.sollBisHeute + 0.005) return `<span class="k-b-status gelb">↗ schneller als geplant</span><small>Bis heute wären ${eur(b.sollBisHeute)} dran. Noch ${eur(b.rest)} für ${restTage} Tag${restTage === 1 ? '' : 'e'}.</small>`;
-  return `<span class="k-b-status gruen">✓ im Plan</span><small>Noch ${eur(b.rest)} übrig${lauf ? ` für ${restTage} Tag${restTage === 1 ? '' : 'e'}` : ''}.</small>`;
+  if (b.status === 'drueber') return `<span class="k-b-status rot">⚠ ${eur(b.drueber)} über dem Limit</span>`;
+  if (b.status === 'erreicht') return '<span class="k-b-status rot">Limit erreicht</span>';
+  if (b.status === 'fast') return `<span class="k-b-status gelb">Fast erreicht</span><small>Noch ${eur(b.rest)}${lauf ? ` für ${restTage} Tag${restTage === 1 ? '' : 'e'}` : ''}.</small>`;
+  if (lauf && b.verbraucht > b.sollBisHeute + 0.005) return `<span class="k-b-status gelb">↗ schneller als gleichmäßig</span><small>Bis heute wären ${eur(b.sollBisHeute)} dran. Noch ${eur(b.rest)} für ${restTage} Tag${restTage === 1 ? '' : 'e'}.</small>`;
+  return `<span class="k-b-status gruen">✓ im Rahmen</span><small>Noch ${eur(b.rest)} übrig${lauf ? ` für ${restTage} Tag${restTage === 1 ? '' : 'e'}` : ''}.</small>`;
 }
-/** Eigene Seite „Ausgaben“: Budgets als Ringe, Wofür mit Referenzwert, Verlauf 6 Monate. */
+const limitStaende = (m) => K.limits(S.k).map((l) => K.limitStand(S.k, l, m, C.heute()));
+/** Eigene Seite „Ausgaben“: Limits als Ringe, Kategorien mit Referenzwert, Verlauf 6 Monate. */
 function ausgabenAnsicht() {
   const k = S.k; const heute = C.heute(); const akt = heute.slice(0, 7);
   const m = S.aMonat || akt; const lauf = m === akt;
-  const bud = K.budgets(k).map((x) => K.budgetStand(k, x, m, heute)).filter((b) => b.plan > 0 || b.verbraucht > 0);
+  const bud = limitStaende(m);
   const a = K.wofuerAuswertung(k, m, m);
   const ref = K.referenzWerte(k, m);
   const max = Math.max(1, ...a.reihen.map((x) => Math.max(x.summe, ref.werte.get(x.name) || 0)));
@@ -232,18 +319,19 @@ function ausgabenAnsicht() {
   const ersterMonat = [...k.buchungen.map((b) => b.giltFuer).filter(Boolean)].sort()[0] || akt;
   const kopf = `<div class="k-topfkopf"><button class="k-zurueck" data-k="a-zurueck" aria-label="Zurück"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><h2>Ausgaben</h2></div>
     <div class="k-amonat"><button class="knopf leise klein" data-k="a-monat" data-arg="${K.monatPlus(m, -1)}" ${K.monatPlus(m, -1) < ersterMonat ? 'disabled' : ''} aria-label="Vorheriger Monat">‹</button><b>${h(mn(m))}${lauf ? ' <small>läuft</small>' : ''}</b><button class="knopf leise klein" data-k="a-monat" data-arg="${K.monatPlus(m, 1)}" ${m >= akt ? 'disabled' : ''} aria-label="Nächster Monat">›</button></div>`;
-  const budHtml = bud.length ? `<section><h2>Budgets</h2>${bud.map((b) => `<div class="k-budget">${budgetRing(b)}<div class="k-b-info"><b class="k-b-name">${h(b.name)}</b>${budgetText(b, lauf)}
+  const budHtml = bud.length ? `<section><h2>Limits</h2>${bud.map((b) => `<div class="k-budget">${budgetRing(b)}<div class="k-b-info"><b class="k-b-name">${h(b.name)}</b>${limitText(b, lauf)}
       <button class="link" data-k="wofuer-filter" data-arg="${h(b.name)}">${b.anzahl} Buchung${b.anzahl === 1 ? '' : 'en'} ansehen</button></div></div>`).join('')}
-    <p class="hint">Blauer Ring: verbraucht vom Budget (voll = aufgebraucht). Roter innerer Ring: was darüber hinausgeht. Der Strich zeigt, wie viel bis heute dran wäre, wenn du gleichmäßig verbrauchst.</p></section>`
-    : `<section><h2>Budgets</h2><div class="leer">Noch kein Monatsbudget. Ein Topf, an den du jeden Monat gehst, lässt sich auf seiner Seite unter „Töpfe“ in ein Budget umwandeln.</div></section>`;
-  const wofHtml = `<section><h2>Wofür ausgegeben</h2>${a.reihen.length ? `<div class="k-wofuer">${a.reihen.map((x) => { const rw = ref.werte.get(x.name);
-    const bx = K.budgets(k).find((y) => y.posten === x.name);
-    return `<button class="k-w-zeile ${x.name === 'Nicht zugeordnet' ? 'leise' : ''}" data-k="wofuer-filter" data-arg="${h(x.name)}"><span class="k-w-name">${h(x.name)} <small>${x.anzahl}×${bx ? ` · Budget ${eur(K.plan(bx, m))}` : rw != null ? ` · Ø ${eur(rw)}` : ''}</small></span><b>${eur(x.summe)}</b>
+    <p class="hint">Blauer Ring: verbraucht vom Limit (voll = erreicht). Roter innerer Ring: was darüber hinausgeht. Der Strich zeigt, wie viel bis heute dran wäre, wenn du gleichmäßig ausgibst. Limits warnen nur, die Vorschau zieht sie nicht ab.</p>
+    <button class="knopf leise klein" data-k="limits">Limits einstellen</button></section>`
+    : `<section><h2>Limits</h2><div class="leer">Noch kein Limit. <button class="link" data-k="limits">Limits einstellen</button></div></section>`;
+  const wofHtml = `<section><h2>Ausgaben nach Kategorie</h2>${a.reihen.length ? `<div class="k-wofuer">${a.reihen.map((x) => { const rw = ref.werte.get(x.name);
+    const bx = bud.find((y) => y.name === x.name);
+    return `<button class="k-w-zeile ${x.name === 'Nicht zugeordnet' ? 'leise' : ''}" data-k="wofuer-filter" data-arg="${h(x.name)}"><span class="k-w-name">${h(x.name)} <small>${x.anzahl}×${bx ? ` · Limit ${eur(bx.limit)}` : rw != null ? ` · Ø ${eur(rw)}` : ''}</small></span><b>${eur(x.summe)}</b>
       <span class="k-w-balken mit-ref"><i style="width:${Math.round((x.summe / max) * 100)}%"></i>${rw != null ? `<em class="k-w-ref" style="left:${Math.min(100, Math.round((rw / max) * 100))}%" title="Ø ${eur(rw)}"></em>` : ''}</span></button>`; }).join('')}
       <div class="k-w-zeile summe"><span class="k-w-name">Ausgaben gesamt</span><b>${eur(a.gesamt)}</b></div></div>
-      <p class="hint" style="margin-top:6px">${ref.werte.size ? `Strich und „Ø“ = Durchschnitt aus ${ref.monate.map((x) => mn(x, false)).join(', ')}. <b>Nur ein Referenzwert, kein Plan</b> – damit du siehst, ob ein Monat aus der Reihe fällt.` : 'Sobald es zwei Monate mit „Wofür“ gibt, zeigt die App hier einen Durchschnitt als Referenz.'}</p>`
+      <p class="hint" style="margin-top:6px">${ref.werte.size ? `Strich und „Ø“ = Durchschnitt aus ${ref.monate.map((x) => mn(x, false)).join(', ')}. <b>Nur ein Referenzwert, kein Plan</b> – damit du siehst, ob ein Monat aus der Reihe fällt.` : 'Sobald es zwei Monate mit Kategorien gibt, zeigt die App hier einen Durchschnitt als Referenz.'}</p>`
     : '<div class="leer">In diesem Monat gibt es noch keine Ausgaben.</div>'}
-    ${a.ohne ? `<p class="hint">${a.ohne} Ausgabe${a.ohne > 1 ? 'n' : ''} ohne „Wofür“. <button class="link" data-k="wofuer-alle">Jetzt zuordnen</button></p>` : ''}</section>`;
+    ${a.ohne ? `<p class="hint">${a.ohne} Ausgabe${a.ohne > 1 ? 'n' : ''} ohne Kategorie. <button class="link" data-k="wofuer-alle">Jetzt zuordnen</button></p>` : ''}</section>`;
   const vmax = (g) => Math.max(1, ...g.werte);
   const verlauf = reihen.length ? `<section><h2>Verlauf</h2><div class="k-verlauf">
       <div class="k-vl kopf"><span></span><span class="k-vl-bars">${monate6.map((x) => `<i>${h(mn(x, false).slice(0, 3))}</i>`).join('')}</span><span>Ø</span></div>
@@ -252,24 +340,25 @@ function ausgabenAnsicht() {
     </div><p class="hint" style="margin-top:6px">Je Zeile eigener Maßstab, der hervorgehobene Balken ist ${h(mn(m, false))}. Ø = Durchschnitt der Monate mit Ausgaben in dieser Gruppe.</p></section>` : '';
   return kopf + budHtml + wofHtml + verlauf;
 }
-/** Auswertung „Wofür“ für den aktuellen Monat, 3 oder 12 Monate. */
+/** Kachel „Ausgaben nach Kategorie“ mit Limits (aktueller Monat, 3 oder 12 Monate). */
 function wofuerHtml() {
   const akt = C.heute().slice(0, 7);
   const von = S.wZeit === '12' ? K.monatPlus(akt, -11) : S.wZeit === '3' ? K.monatPlus(akt, -2) : akt;
   const a = K.wofuerAuswertung(S.k, von, akt);
   const max = Math.max(1, ...a.reihen.map((x) => x.summe));
   const wahl = [['monat', mn(akt, false)], ['3', '3 Monate'], ['12', '12 Monate']];
-  const budK = K.budgets(S.k).map((x) => K.budgetStand(S.k, x, akt, C.heute())).filter((b) => b.plan > 0);
-  return `<section><h2>Wofür ausgegeben</h2>
-    ${budK.map((b) => `<button class="k-budget klein" data-k="ausgaben">${budgetRing(b, false)}<div class="k-b-info"><b class="k-b-name">${h(b.name)} <span>${eur(b.verbraucht)} von ${eur(b.plan)}</span></b>${budgetText(b, true)}</div></button>`).join('')}
+  const budK = limitStaende(akt);
+  const aus = K.funktionAn(einst(), 'ausgaben');
+  return `<section><h2>Ausgaben nach Kategorie</h2>
+    ${budK.map((b) => `<${aus ? 'button data-k="ausgaben"' : 'div'} class="k-budget klein">${budgetRing(b, false)}<div class="k-b-info"><b class="k-b-name">${h(b.name)} <span>${eur(b.verbraucht)} von ${eur(b.limit)}</span></b>${limitText(b, true)}</div></${aus ? 'button' : 'div'}>`).join('')}
     <div class="k-wzeit" role="group">${wahl.map(([w, t]) => `<button class="${S.wZeit === w ? 'an' : ''}" data-k="wzeit" data-arg="${w}">${h(t)}</button>`).join('')}</div>
     ${a.reihen.length ? `<div class="k-wofuer">${a.reihen.map((x) => `<button class="k-w-zeile ${x.name === 'Nicht zugeordnet' ? 'leise' : ''}" data-k="wofuer-filter" data-arg="${h(x.name)}"><span class="k-w-name">${h(x.name)} <small>${x.anzahl}×</small></span><b>${eur(x.summe)}</b><span class="k-w-balken"><i style="width:${Math.round((x.summe / max) * 100)}%"></i></span></button>`).join('')}
       <div class="k-w-zeile summe"><span class="k-w-name">Ausgaben gesamt</span><b>${eur(a.gesamt)}</b></div></div>`
     : '<div class="leer">In diesem Zeitraum gibt es noch keine Ausgaben.</div>'}
-    ${a.ohne ? `<p class="hint" style="margin-top:8px">${a.ohne} Ausgabe${a.ohne > 1 ? 'n' : ''} ohne „Wofür“. <button class="link" data-k="wofuer-alle">Vorschläge für alle Buchungen ansehen</button></p>` : ''}
+    ${a.ohne ? `<p class="hint" style="margin-top:8px">${a.ohne} Ausgabe${a.ohne > 1 ? 'n' : ''} ohne Kategorie. <button class="link" data-k="wofuer-alle">Vorschläge für alle Buchungen ansehen</button></p>` : ''}
     ${a.nichtGezaehlt.length ? `<p class="hint">Nicht gezählt, weil es Geld zwischen deinen Konten ist: ${a.nichtGezaehlt.map((b) => `<button class="link" data-k="pruef-ansehen" data-arg="${h(b.nr)}">${h(b.nr)}</button> (${eur(b.betrag)})`).join(', ')}. Am besten als „Umbuchung“ ändern.</p>` : ''}
-    <button class="knopf leise" style="width:100%;margin-top:10px" data-k="ausgaben">Ausgaben-Übersicht mit Verlauf öffnen</button>
-    <p class="hint">Gezählt nach „Gilt für“. Ohne „Wofür“ wird nach Posten sortiert („Gemeinschaftskonto“, „Trade Republic“, „Feste Posten“). Umbuchungen und Topf-Arten zählen nicht.</p></section>`;
+    ${aus ? '<button class="knopf leise" style="width:100%;margin-top:10px" data-k="ausgaben">Ausgaben mit Verlauf öffnen</button>' : ''}
+    <p class="hint">Gezählt nach „Gilt für“. Ohne Kategorie wird nach Posten sortiert („Gemeinschaftskonto“, „Trade Republic“, „Feste Posten“). Umbuchungen und Topf-Arten zählen nicht. Limits warnen nur, die Vorschau zieht sie nicht ab.</p></section>`;
 }
 function planIstHtml() {
   const m = C.z.monat;
@@ -310,7 +399,7 @@ function buchungen() {
     <div class="k-filter"><input type="search" id="k-suche" placeholder="Suchen …" value="${h(S.suche)}" autocomplete="off">
       <select id="k-fmonat"><option value="">alle Monate</option>${monate.map((m) => `<option value="${m}" ${m === S.fMonat ? 'selected' : ''}>${h(mn(m))}</option>`).join('')}</select>
       <select id="k-fart"><option value="">alle Arten</option>${K.ARTEN.map((a) => `<option ${a === S.fArt ? 'selected' : ''}>${a}</option>`).join('')}</select>
-      <select id="k-fwofuer"><option value="">Wofür: alle</option>${[...WL(), ...K.WOFUER_EXTRA].map((a) => `<option ${a === S.fWofuer ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
+      <select id="k-fwofuer"><option value="">Kategorie: alle</option>${[...WL(), ...K.WOFUER_EXTRA].map((a) => `<option ${a === S.fWofuer ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
     <p class="hint" style="margin:6px 0 10px">${liste.length} Buchungen · Summe Wirkung aufs c24-Konto ${vz(Math.round(liste.reduce((s, b) => s + K.wirkungAuf(b, k.konto.name), 0) * 100) / 100)}</p>
     ${liste.length ? `<div class="buchungen">${liste.map((b) => buchungHtml(b)).join('')}</div>`
     : '<div class="leer">Keine Buchungen gefunden.</div>'}
@@ -324,7 +413,7 @@ function buchungHtml(b, topfName) {
   return `<div class="bu-wrap"><button class="bu" aria-expanded="false"><span class="t">${umb ? `${h(b.konto)} → ${h(b.gegen || '?')}` : h(b.posten || b.gegen || b.beschreibung || b.art)}${b.topf && !topfName && !umb ? ` <span class="chip aus-topf">${h(b.topf)}</span>` : ''}${fremd ? ` <span class="chip">${h(b.konto)}</span>` : ''}${b.wofuer ? ` <span class="chip wofuer">${h(b.wofuer)}</span>` : ''}${K.istTeil(b) ? ` <span class="chip wofuer">${h(b.kommentar.match(/^Teil von P\d+/)[0])}</span>` : ''}</span>
       <span class="betrag ${(topfName ? wirk > 0 : b.art === 'Einnahme') ? 'plus' : ''}">${zeichen}${eur(b.betrag)}</span>
       <span class="r">${dk(b.datum)} · ${h(b.art)}${b.giltFuer && b.giltFuer !== b.datum?.slice(0, 7) ? ` <span class="okt">gilt für ${h(mn(b.giltFuer, false))}</span>` : ''}${b.gegen && b.posten && !umb ? ' · ' + h(b.gegen) : ''}</span>
-      <span class="more"><dl>${[['Nummer', b.nr], ['Konto', umb ? `${b.konto} → ${b.gegen}` : b.konto], ['Datum', dl(b.datum)], ['Gilt für', mn(b.giltFuer)], ['Kategorie (Bank)', b.kategorie], ['Wofür', b.wofuer], ['Topf', b.topf], ['Beschreibung', b.beschreibung], ['Kommentar', b.kommentar], ['Quelle', b.quelle]].filter(([, w]) => w).map(([a, w]) => `<dt>${a}</dt><dd>${h(w)}</dd>`).join('')}</dl></span></button>
+      <span class="more"><dl>${[['Nummer', b.nr], ['Konto', umb ? `${b.konto} → ${b.gegen}` : b.konto], ['Datum', dl(b.datum)], ['Gilt für', mn(b.giltFuer)], ['Bank-Kategorie', b.kategorie], ['Kategorie', b.wofuer], ['Topf', b.topf], ['Beschreibung', b.beschreibung], ['Kommentar', b.kommentar], ['Quelle', b.quelle]].filter(([, w]) => w).map(([a, w]) => `<dt>${a}</dt><dd>${h(w)}</dd>`).join('')}</dl></span></button>
       <div class="bu-aktion"><button class="knopf leise klein" data-k="bearbeiten" data-arg="${h(b.nr)}">Bearbeiten</button>${b.art === 'Ausgabe' && !K.istTeil(b) ? `<button class="knopf leise klein" data-k="aufteilen" data-arg="${h(b.nr)}">Aufteilen</button>` : ''}<button class="knopf leise klein" data-k="loeschen-frage" data-arg="${h(b.nr)}">Löschen</button></div></div>`;
 }
 
@@ -373,7 +462,6 @@ function topfSeite(t) {
       <div class="rz summe"><span>Stand</span><b>${eur(t.stand)}</b></div></div>
       ${t.bemerkung ? `<p class="hint" style="margin-top:6px">${h(t.bemerkung)}</p>` : ''}
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="knopf leise klein" data-k="topf-buchen" data-arg="In Topf legen">In Topf legen</button><button class="knopf leise klein" data-k="topf-buchen" data-arg="Aus Topf nehmen">Aus Topf nehmen</button><button class="knopf leise klein" data-k="topf" data-arg="${t.zeile}">Topf ändern</button></div></section>
-    ${!t.frei ? `<p class="hint" style="margin:-4px 0 14px">Gehst du jeden Monat an diesen Topf (z. B. für etwas, das du laufend kaufst)? Dann passt ein Monatsbudget besser. <button class="link" data-k="topf-budget" data-arg="${h(t.name)}">In Monatsbudget umwandeln</button></p>` : ''}
     <section><h2>Buchungen</h2>${bu.length ? `<div class="buchungen">${bu.map((b) => buchungHtml(b, t.name).replace('class="bu-wrap"', `class="bu-wrap${nach(b) ? '' : ' alt'}"`)).join('')}</div><p class="hint" style="margin-top:6px">Ausgegraut: vor dem Stichtag, steckt schon im Anfangsbestand.</p>` : '<div class="leer">Noch keine Buchungen mit diesem Topf.</div>'}</section>`;
 }
 
@@ -413,26 +501,100 @@ function trImportHtml() {
     <button class="knopf" data-k="tr-uebernehmen">${t.neu.length} Zeilen übernehmen</button>` : '<p class="hint">Alles schon in der Datei.</p>'}</div>`;
 }
 
+// ---------------------------------------------------------------- Menü (Einstellungen, Funktionen, Verwaltung)
+const zurueckKopf = (titel, ziel = 'seite-zu') => `<div class="k-topfkopf"><button class="k-zurueck" data-k="${ziel}" aria-label="Zurück"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><h2>${h(titel)}</h2></div>`;
+const menuKnopf = (k, arg, titel, text, rechts = '') => `<button class="k-mz" data-k="${k}" ${arg ? `data-arg="${h(arg)}"` : ''}><span class="n">${h(titel)}${text ? `<small>${h(text)}</small>` : ''}</span>${rechts}<span class="pfeil" aria-hidden="true">›</span></button>`;
 function mehr(r) {
-  const k = S.k;
-  const soll = sollGemeinsam();
-  const abw = sollAbweichungen();
-  const offen = k.offen.filter((o) => o.status !== 'erledigt');
-  return `<section><h2>c24-Kontoauszug</h2><p class="hint">CSV aus dem Online-Banking (Transaktionen › Export › CSV). Die App zeigt, was neu ist und was du schon von Hand eingetragen hast. Nichts wird ohne deinen Klick übernommen.</p>
-      <label class="knopf leise" for="k-c24" style="margin-top:10px">c24-Export einlesen</label><input type="file" id="k-c24" accept=".csv,text/csv" hidden>${c24Html()}</section>
-    <section><h2>Gemeinsam (Gemeinschaftskonto)</h2>
+  const seiten = { c24: c24Seite, gemeinsam: () => gemeinsamSeite(r), offen: offenSeite, posten: postenSeite, konten: kontenSeite, kategorien: kategorienSeite, anpassen: anpassenSeite, funktionen: funktionenSeite };
+  if (S.seite && seiten[S.seite]) return seiten[S.seite]();
+  S.seite = null;
+  const e = einst(); const an = (id) => K.funktionAn(e, id);
+  const offen = S.k.offen.filter((o) => o.status !== 'erledigt').length;
+  const fkt = [
+    an('vorschau') && menuKnopf('tab', 'k-vorschau', 'Vorschau', 'Zwölf Monate im Voraus'),
+    an('depot') && menuKnopf('tab', 'k-depot', 'Depot', 'Trade Republic'),
+    an('ausgaben') && menuKnopf('ausgaben', '', 'Ausgaben mit Verlauf', 'Kategorien, Limits, 6 Monate'),
+    an('c24') && menuKnopf('seite', 'c24', 'c24-Import', 'Kontoauszug einlesen und abgleichen'),
+    an('gemeinsam') && menuKnopf('seite', 'gemeinsam', 'Gemeinsam', 'Soll und Ist aufs Gemeinschaftskonto', sollAbweichungen().length ? '<span class="k-ampel">Soll geändert</span>' : ''),
+    an('offen') && menuKnopf('seite', 'offen', 'Offene Punkte', '', offen ? `<span class="k-ampel">${offen}</span>` : ''),
+  ].filter(Boolean);
+  const thema = hol(THEMA) || 'auto';
+  const konto = C.ms?.gemerktesKonto?.();
+  return `<section><h2>Funktionen</h2><div class="k-menu">${fkt.join('') || '<div class="leer">Alle Funktionen sind ausgeschaltet.</div>'}</div></section>
+    <section><h2>Einstellen</h2><div class="k-menu">
+      ${menuKnopf('seite', 'anpassen', 'Übersicht anpassen', 'Kacheln ein- und ausblenden, Reihenfolge')}
+      ${menuKnopf('seite', 'funktionen', 'Funktionen an- und ausschalten', `${K.FUNKTIONEN.filter((f) => an(f.id)).length} von ${K.FUNKTIONEN.length} an`)}</div></section>
+    <section><h2>Verwaltung</h2><div class="k-menu">
+      ${menuKnopf('seite', 'posten', 'Kosten und Einnahmen', 'Feste Posten anlegen, ändern, beenden')}
+      ${menuKnopf('seite', 'konten', 'Konten', 'Stände zum Stichtag, Monatsabschlüsse')}
+      ${menuKnopf('seite', 'kategorien', 'Kategorien und Limits', `${K.limits(S.k).length} Limit${K.limits(S.k).length === 1 ? '' : 's'}`)}</div></section>
+    <section><h2>Grundlegendes</h2>
+      ${S.item?.webUrl ? `<a class="knopf leise" style="width:100%" href="${h(S.item.webUrl)}" target="_blank" rel="noopener">Kai_Privat.xlsx in Excel öffnen</a>` : ''}
+      <div class="feld" style="margin-top:12px"><span>Darstellung (auf diesem Gerät)</span><div class="k-wzeit" role="group">${[['auto', 'Automatisch'], ['hell', 'Hell'], ['dunkel', 'Dunkel']].map(([w, t]) => `<button class="${thema === w ? 'an' : ''}" data-k="thema" data-arg="${w}">${t}</button>`).join('')}</div></div>
+      <div class="rechnung" style="margin-top:12px"><div class="rz"><span>Anmeldung<small>${konto ? h(konto) : 'Microsoft-Konto'}</small></span><button class="knopf leise klein" data-k="gem-menu">Datei & Anmeldung</button></div>
+        <div class="rz"><span>Version</span><b>${h(C.version || '')}</b></div></div>
+      <button class="knopf leise" style="width:100%;margin-top:10px" data-k="neu-laden">Neu laden</button></section>`;
+}
+function c24Seite() {
+  return `${zurueckKopf('c24-Import')}<section><p class="hint">CSV aus dem Online-Banking (Transaktionen › Export › CSV). Auf dem Handy: Datei herunterladen und hier auswählen. Die App zeigt, was neu ist und was du schon von Hand eingetragen hast. Nichts wird ohne deinen Klick übernommen.</p>
+      <label class="knopf" for="k-c24" style="margin-top:10px">c24-Export auswählen</label><input type="file" id="k-c24" accept=".csv,text/csv,text/comma-separated-values,application/vnd.ms-excel,text/plain" hidden>${c24Html()}</section>`;
+}
+function gemeinsamSeite(r) {
+  const k = S.k; const soll = sollGemeinsam(); const abw = sollAbweichungen();
+  return `${zurueckKopf('Gemeinsam')}<section><h2>Gemeinschaftskonto</h2>
       <div class="k-tabelle gem"><div class="k-tz kopf"><span>Monat</span><span>Soll</span><span>überwiesen</span><span>offen</span></div>
-      ${k.gemeinsam.map((g) => { const v = r.vorschau.find((x) => x.monat === g.monat); const istB = K.planIst(k, g.monat).gemeinsam.ist; const neu = soll[g.monat];
+      ${k.gemeinsam.map((g) => { const istB = K.planIst(k, g.monat).gemeinsam.ist; const neu = soll[g.monat];
         return `<div class="k-tz"><span>${h(mn(g.monat, false))} ${g.monat.slice(2, 4)}</span><span>${eur(g.soll || 0)}${neu != null && Math.abs(neu - (g.soll || 0)) > 0.005 ? `<small class="warnfarbe"> neu ${eur(neu)}</small>` : ''}</span><span>${eur(istB)}</span><span>${eur(Math.max(0, (g.soll || 0) - istB))}</span></div>`; }).join('')}</div>
-      <p class="hint" style="margin-top:6px">Soll kommt aus der gemeinsamen Datei (Blatt Aufteilung, nur gelesen, bei jedem Öffnen). ${abw.length ? `<button class="link" data-k="soll-uebernehmen">${abw.length} Änderung${abw.length > 1 ? 'en' : ''} übernehmen</button>` : 'Alles aktuell.'}</p></section>
-    <section><h2>Feste Kosten</h2><div class="feste">${k.kosten.map((x) => `<div class="f-zeile"><div><div class="t">${h(x.posten)}</div><div class="hint">${h(x.rhythmus)}${x.rhythmus === 'jährlich' && x.faellig ? ` im ${mn('2000-' + String(x.faellig).padStart(2, '0'), false)}` : ''}${x.tag ? ` · am ${x.tag}.` : ''}${x.ab ? ` · ab ${mn(x.ab)}` : ''}${x.bis ? ` · bis ${mn(x.bis)}` : ''}</div></div><b>${eur(x.betrag)}</b><button class="knopf leise klein" data-k="posten" data-arg="kosten:${x.zeile}">Ändern</button></div>`).join('')}</div>
-      ${k.kosten.length < 20 ? '<button class="knopf leise" style="margin-top:10px" data-k="posten" data-arg="kosten:">Neue feste Kosten</button>' : ''}</section>
+      <p class="hint" style="margin-top:6px">Soll kommt aus der gemeinsamen Datei (Blatt Aufteilung, nur gelesen, bei jedem Öffnen). ${abw.length ? `<button class="link" data-k="soll-uebernehmen">${abw.length} Änderung${abw.length > 1 ? 'en' : ''} übernehmen</button>` : 'Alles aktuell.'}</p></section>`;
+}
+function offenSeite() {
+  const k = S.k; const offen = k.offen.filter((o) => o.status !== 'erledigt');
+  return `${zurueckKopf('Offene Punkte')}<section>${offen.length ? `<div class="feste">${offen.map((o) => `<div class="f-zeile"><div><div class="t">${h(o.punkt)}</div>${o.notiz ? `<div class="hint">${h(o.notiz)}</div>` : ''}</div><span></span><button class="knopf leise klein" data-k="erledigt" data-arg="${o.zeile}">Erledigt</button></div>`).join('')}</div>` : '<div class="leer">Nichts offen.</div>'}
+      ${k.offen.length - offen.length ? `<p class="hint" style="margin-top:6px">${k.offen.length - offen.length} erledigt.</p>` : ''}</section>`;
+}
+function postenSeite() {
+  const k = S.k; const fest = K.festeKosten(k); const alt = K.altBudgets(k);
+  return `${zurueckKopf('Kosten und Einnahmen')}
+    <section><h2>Feste Kosten</h2><div class="feste">${fest.map((x) => `<div class="f-zeile"><div><div class="t">${h(x.posten)}</div><div class="hint">${h(x.rhythmus)}${x.rhythmus === 'jährlich' && x.faellig ? ` im ${mn('2000-' + String(x.faellig).padStart(2, '0'), false)}` : ''}${x.tag ? ` · am ${x.tag}.` : ''}${x.ab ? ` · ab ${mn(x.ab)}` : ''}${x.bis ? ` · bis ${mn(x.bis)}` : ''}</div></div><b>${eur(x.betrag)}</b><button class="knopf leise klein" data-k="posten" data-arg="kosten:${x.zeile}">Ändern</button></div>`).join('')}</div>
+      ${k.kosten.length < 20 ? '<button class="knopf leise" style="margin-top:10px" data-k="posten" data-arg="kosten:">Neue feste Kosten</button>' : ''}
+      ${alt.length ? `<p class="hint" style="margin-top:8px">Nicht mehr in der Vorschau: ${alt.map((x) => h(x.posten)).join(', ')} (früher Monatsbudget, Bereich „Budget“). Die Zeilen bleiben in der Datei, die App führt sie als Limit.</p>` : ''}</section>
     <section><h2>Einnahmen</h2><div class="feste">${k.einnahmen.map((x) => `<div class="f-zeile"><div><div class="t">${h(x.posten)}</div><div class="hint">${h(x.rhythmus)}${x.eingang ? ` · ${h(x.eingang)}` : ''}${x.ab ? ` · ab ${mn(x.ab)}` : ''}${x.bis ? ` · bis ${mn(x.bis)}` : ''}</div></div><b class="plus">${eur(x.betrag)}</b><button class="knopf leise klein" data-k="posten" data-arg="einnahmen:${x.zeile}">Ändern</button></div>`).join('')}</div>
-      ${k.einnahmen.length < 8 ? '<button class="knopf leise" style="margin-top:10px" data-k="posten" data-arg="einnahmen:">Neue Einnahme</button>' : ''}</section>
-    <section><h2>Offene Punkte</h2>${offen.length ? `<div class="feste">${offen.map((o) => `<div class="f-zeile"><div><div class="t">${h(o.punkt)}</div>${o.notiz ? `<div class="hint">${h(o.notiz)}</div>` : ''}</div><span></span><button class="knopf leise klein" data-k="erledigt" data-arg="${o.zeile}">Erledigt</button></div>`).join('')}</div>` : '<div class="leer">Nichts offen.</div>'}
-      ${k.offen.length - offen.length ? `<p class="hint" style="margin-top:6px">${k.offen.length - offen.length} erledigt.</p>` : ''}</section>
-    <section><h2>Konten</h2><div class="feste">${eigeneKonten().map((kt) => `<div class="f-zeile"><div><div class="t">${h(kt.name)}</div><div class="hint">Stand zum Stichtag ${kt.anfang == null ? 'fehlt' : `${eur(kt.anfang)} am ${dl(kt.stichtag) || '–'}`}</div></div><b>${(() => { const st = K.standVon(k, kt); return st == null ? '–' : eur(st); })()}</b><button class="knopf leise klein" data-k="konto" data-arg="${kt.zeile}">Ändern</button></div>`).join('')}</div>
-      ${S.item?.webUrl ? `<a class="knopf leise" style="margin-top:10px" href="${h(S.item.webUrl)}" target="_blank" rel="noopener">In Excel öffnen</a>` : ''}</section>`;
+      ${k.einnahmen.length < 8 ? '<button class="knopf leise" style="margin-top:10px" data-k="posten" data-arg="einnahmen:">Neue Einnahme</button>' : ''}</section>`;
+}
+function kontenSeite() {
+  const k = S.k;
+  const ab = [...(k.abschluesse || [])].sort((a, b) => (b.monat || '').localeCompare(a.monat || ''));
+  return `${zurueckKopf('Konten')}<section><h2>Konten</h2><div class="feste">${eigeneKonten().map((kt) => `<div class="f-zeile"><div><div class="t">${h(kt.name)}</div><div class="hint">Stand zum Stichtag ${kt.anfang == null ? 'fehlt' : `${eur(kt.anfang)} am ${dl(kt.stichtag) || '–'}`}</div></div><b>${(() => { const st = K.standVon(k, kt); return st == null ? '–' : eur(st); })()}</b><button class="knopf leise klein" data-k="konto" data-arg="${kt.zeile}">Ändern</button></div>`).join('')}</div>
+      <button class="knopf leise" style="margin-top:10px" data-k="pruefen">Kontostand prüfen</button></section>
+    <section><h2>Monatsabschlüsse</h2>${ab.length ? `<div class="feste">${ab.map((a) => `<div class="f-zeile"><div><div class="t">${h(mn(a.monat))} · ${h(anzeigeName(a.konto || ''))}</div><div class="hint">geprüft ${dl(a.am) || '–'} · Bank ${eur(a.bank ?? 0)} · App ${eur(a.app ?? 0)}${a.checkliste ? ` · ${h(a.checkliste)}` : ''}</div></div><b class="${Math.abs(a.diff || 0) >= 0.005 ? 'neg' : ''}">${Math.abs(a.diff || 0) < 0.005 ? '✓' : vz(a.diff)}</b><span></span></div>`).join('')}</div>`
+      : '<div class="leer">Noch kein Monatsabschluss. Er wird über „Kontostand prüfen“ gespeichert, sobald ein Monat vorbei ist.</div>'}</section>`;
+}
+function kategorienSeite() {
+  const k = S.k; const lim = K.limits(k); const eigene = Array.isArray(einst().kategorien) ? einst().kategorien : [];
+  const akt = C.heute().slice(0, 7);
+  return `${zurueckKopf('Kategorien und Limits')}
+    <section><h2>Limits</h2>
+      ${lim.length && lim[0].ausBudget ? `<div class="hinweis info">Deine bisherigen Monatsbudgets gelten ab jetzt als Limits mit dem gleichen Betrag. Sie warnen nur und werden in der Vorschau nicht mehr abgezogen. <button class="link" data-k="limits-uebernehmen">In die Datei übernehmen</button></div>` : ''}
+      ${lim.length ? `<div class="feste">${lim.map((l) => { const st = K.limitStand(k, l, akt, C.heute()); return `<div class="f-zeile"><div><div class="t">${h(l.kategorie)}</div><div class="hint">${h(mn(akt, false))}: ${eur(st.verbraucht)} von ${eur(l.betrag)}${l.bemerkung ? ` · ${h(l.bemerkung)}` : ''}</div></div><b>${eur(l.betrag)}</b><span></span></div>`; }).join('')}</div>` : '<div class="leer">Noch kein Limit.</div>'}
+      <button class="knopf leise" style="margin-top:10px" data-k="limits">Limits einstellen</button>
+      <p class="hint" style="margin-top:6px">Ein Limit gilt pro Kategorie und Monat. Ab 80 % und beim Erreichen gibt die App einen Hinweis. Die Vorschau zieht Limits nicht ab.</p></section>
+    <section><h2>Kategorien</h2><div class="k-chips">${K.kategorieListe(k).map((w) => `<span class="chip wofuer">${h(w)}${eigene.includes(w) ? ` <button class="link" data-k="kat-weg" data-arg="${h(w)}" aria-label="${h(w)} entfernen">×</button>` : ''}</span>`).join(' ')}</div>
+      <button class="knopf leise" style="margin-top:10px" data-k="kat-neu">Kategorie anlegen</button>
+      <p class="hint" style="margin-top:6px">Die Kategorie ist freiwillig. Buchungen ohne Kategorie bleiben ohne. Eigene Kategorien stehen im Blatt „Einstellungen“.</p></section>`;
+}
+function anpassenSeite() {
+  const l = S.anpassen || (S.anpassen = kachelListe());
+  const name = (id) => K.KACHELN.find((x) => x.id === id)?.name || id;
+  const notiz = { frei: 'immer sichtbar, mit Badge „Lücke“', luecke: 'erscheint nur, wenn es eine Lücke gibt', spartopf: 'erscheint nur, wenn aufs Spartopf noch Geld fehlt' };
+  return `${zurueckKopf('Übersicht anpassen', 'anpassen-zu')}<section><p class="hint">Haken = sichtbar. Mit den Pfeilen verschiebst du eine Kachel. Neu eingeschaltete Funktionen kommen immer unten dazu.</p>
+    <div class="k-anpassen">${l.map((x, i) => `<div class="k-ap ${x.an ? '' : 'aus'}"><label class="haken"><input type="checkbox" id="k-kachel-${x.id}" ${x.an ? 'checked' : ''} ${x.id === 'frei' ? 'disabled' : ''}><span><b data-hilfe-fertig="1">${h(name(x.id))}</b>${notiz[x.id] ? `<small>${h(notiz[x.id])}</small>` : ''}</span></label>
+      <button class="knopf leise klein" data-k="kachel-hoch" data-arg="${x.id}" ${i === 0 ? 'disabled' : ''} aria-label="${h(name(x.id))} nach oben">↑</button><button class="knopf leise klein" data-k="kachel-runter" data-arg="${x.id}" ${i === l.length - 1 ? 'disabled' : ''} aria-label="${h(name(x.id))} nach unten">↓</button></div>`).join('')}</div>
+    <div class="knoepfe" style="margin-top:14px"><button class="knopf" data-k="anpassen-speichern">Speichern</button><button class="knopf leise" data-k="anpassen-standard">Wie vor dem Umbau</button><button class="knopf leise" data-k="anpassen-zu">Abbrechen</button></div></section>`;
+}
+function funktionenSeite() {
+  const e = einst();
+  return `${zurueckKopf('Funktionen')}<section><p class="hint">Ausgeschaltete Funktionen verschwinden aus Menü und Reitern. Die Daten in der Datei bleiben. Neu eingeschaltete Kacheln kommen in der Übersicht unten dazu.</p>
+    <div class="k-anpassen">${K.FUNKTIONEN.map((f) => `<div class="k-ap"><label class="haken"><input type="checkbox" id="k-fkt-${f.id}" ${K.funktionAn(e, f.id) ? 'checked' : ''}><span><b data-hilfe-fertig="1">${h(f.name)}</b><small>${h(f.text)}</small></span></label></div>`).join('')}</div></section>`;
 }
 
 function c24Html() {
@@ -452,7 +614,7 @@ function c24Html() {
         ${x.vorschlag.art === K.UMBUCHUNG ? `<div class="hint">Umbuchung ${h(x.vorschlag.konto)} → ${h(x.vorschlag.gegen)}</div>` : ''}
         <div class="zwei"><label class="feld" ${x.vorschlag.art === K.UMBUCHUNG ? 'hidden' : ''}><span>Posten</span><select name="p${i}">${['', ...postenListe].map((p) => `<option ${p === (x.vorschlag.posten || '') ? 'selected' : ''} value="${h(p)}">${h(p || '– variabel –')}</option>`).join('')}</select></label>
         <label class="feld"><span>Gilt für</span><input type="month" name="g${i}" value="${x.vorschlag.giltFuer}"></label></div>
-        ${x.vorschlag.art === 'Ausgabe' ? `<label class="feld"><span>Wofür</span><select name="w2${i}">${['', ...WL()].map((w) => `<option ${w === (x.vorschlag.wofuer || '') ? 'selected' : ''} value="${h(w)}">${h(w || '– nicht zugeordnet –')}</option>`).join('')}</select></label>` : ''}`}</div>`).join('')}</div>
+        ${x.vorschlag.art === 'Ausgabe' ? `<label class="feld"><span>Kategorie</span><select name="w2${i}">${['', ...WL()].map((w) => `<option ${w === (x.vorschlag.wofuer || '') ? 'selected' : ''} value="${h(w)}">${h(w || '– nicht zugeordnet –')}</option>`).join('')}</select></label>` : ''}`}</div>`).join('')}</div>
     <div class="knoepfe"><button class="knopf" type="submit">Ausgewählte übernehmen</button></div></form></div>`;
 }
 const postenAuswahl = () => [...new Set([...S.k.einnahmen.map((e) => e.posten), ...S.k.kosten.map((x) => x.posten), ...K.POSTEN_EXTRA].filter(Boolean))];
@@ -478,7 +640,7 @@ function eintragenDialog(fehler, v0) {
     <div class="zwei">${feld('datum', 'Datum', v.datum, 'type="date"')}${feld('giltFuer', 'Gilt für', v.giltFuer, 'type="month"')}</div>
     ${kontoNamen.length > 1 ? `<div class="zwei">${auswahl('konto', umb ? 'Von Konto' : 'Konto', kontoNamen, v.konto)}<span class="nur-umb" ${umb ? '' : 'hidden'}>${auswahl('nach', 'Nach Konto', kontoNamen, nachVorschlag)}</span></div>` : `<input type="hidden" name="konto" value="${h(v.konto)}">`}
     <div class="nicht-umb" ${umb ? 'hidden' : ''}>${auswahl('posten', 'Posten', postenAuswahl(), v.posten, '– variabel –')}
-    ${auswahl('wofuer', 'Wofür', WL(), v.wofuer, '– nicht zugeordnet –')}
+    ${auswahl('wofuer', 'Kategorie', WL(), v.wofuer, '– nicht zugeordnet –')}
     ${auswahl('topf', 'Topf', S.k.toepfe.map((t) => t.name), v.topf, 'kein Topf')}
     ${feld('gegen', 'Gegenüber', umb ? '' : v.gegen, 'placeholder="z. B. Aral"')}</div>${feld('beschreibung', 'Beschreibung (optional)', v.beschreibung)}${feld('kommentar', 'Kommentar (optional)', v.kommentar)}
     ${bearb ? `<input type="hidden" name="nr" value="${h(v.nr)}">` : ''}
@@ -534,8 +696,8 @@ function eintragenDialog(fehler, v0) {
 
 function pruefDialog(fehler, werte = {}) {
   const konten = K.eigeneKonten(S.k);
-  dialog(`<form id="k-pruefen" novalidate><h2 id="menu-titel">Mit Bank-App vergleichen</h2>
-    <p class="hint">Trag die Stände ein, die die c24-App gerade anzeigt. Die App vergleicht sie mit dem, was sie aus deinen Buchungen rechnet. Es wird nichts gespeichert, außer dem Ergebnis auf diesem Gerät.</p>
+  dialog(`<form id="k-pruefen" novalidate><h2 id="menu-titel">Kontostand prüfen</h2>
+    <p class="hint">Trag die Stände ein, die die c24-App gerade anzeigt. Die App vergleicht sie mit dem, was sie aus deinen Buchungen rechnet. Gespeichert wird nur das Ergebnis auf diesem Gerät. Ist ein Monat vorbei, kannst du danach den Monatsabschluss in der Datei speichern.</p>
     ${konten.map((kt, i) => feld('b' + i, `${h(anzeigeName(kt.name))} laut Bank in €`, werte['b' + i] ?? '', 'inputmode="decimal" placeholder="0,00"')).join('')}
     ${knoepfe(fehler, 'Vergleichen')}</form>`);
 }
@@ -545,9 +707,12 @@ function pruefErgebnis(e) {
     ${x.verdacht.length ? `<p class="hint" style="margin:8px 0 4px">${h(x.verdacht.find((v) => v.hinweis)?.hinweis || '')}</p>
       ${x.verdacht.filter((v) => v.nr).length ? `<p style="margin:6px 0 4px"><b>Diese Buchungen solltest du dir ansehen:</b></p><div class="k-pr-liste">${x.verdacht.filter((v) => v.nr).slice(0, 12).map((v) => `<button class="k-pr-b" data-k="pruef-ansehen" data-arg="${h(v.nr)}"><span>${h(v.nr)} · ${dk(v.datum)} · ${h(v.posten || v.gegen || v.art)}<small>${h(v.grund)}</small></span><b>${vz(v.wirkung)}</b></button>`).join('')}</div>`
         : '<p class="hint">Keine Buchung passt genau zur Differenz. Vergleich am besten die letzten Tage mit der Umsatzliste in der c24-App.</p>'}` : ''}</div>`;
-  const falsch = e.falsch.length ? `<div class="hinweis info" style="margin-top:12px"><b>Nicht als Umbuchung eingetragen:</b> ${e.falsch.map((b) => `<button class="link" data-k="pruef-ansehen" data-arg="${h(b.nr)}">${h(b.nr)} (${eur(b.betrag)} ${h(b.konto)} → ${h(b.gegen)})</button>`).join(', ')}. Das sieht nach Geld zwischen deinen eigenen Konten aus. Der Kontostand stimmt trotzdem, aber in „Wofür ausgegeben“ zählt es als Ausgabe. Über „Bearbeiten“ als Art „Umbuchung“ eintragen.</div>` : '';
-  dialog(`<h2 id="menu-titel">${e.ok ? '✓ Alles stimmt' : 'Abweichung gefunden'}</h2>${e.konten.map(zeile).join('')}${falsch}
-    <div class="knoepfe"><button class="knopf" id="schliessen">Fertig</button></div>`);
+  const falsch = e.falsch.length ? `<div class="hinweis info" style="margin-top:12px"><b>Nicht als Umbuchung eingetragen:</b> ${e.falsch.map((b) => `<button class="link" data-k="pruef-ansehen" data-arg="${h(b.nr)}">${h(b.nr)} (${eur(b.betrag)} ${h(b.konto)} → ${h(b.gegen)})</button>`).join(', ')}. Das sieht nach Geld zwischen deinen eigenen Konten aus. Der Kontostand stimmt trotzdem, aber in „Ausgaben nach Kategorie“ zählt es als Ausgabe. Über „Bearbeiten“ als Art „Umbuchung“ eintragen.</div>` : '';
+  S.pruefErg = e;
+  const m = K.offenerAbschluss(S.k, C.heute());
+  const abschluss = m ? `<div class="hinweis info" style="margin-top:12px"><b>${h(mn(m))} ist vorbei.</b> Du kannst das Ergebnis als Monatsabschluss in der Datei speichern (mit kurzer Checkliste).</div>` : '';
+  dialog(`<h2 id="menu-titel">${e.ok ? '✓ Alles stimmt' : 'Abweichung gefunden'}</h2>${e.konten.map(zeile).join('')}${falsch}${abschluss}
+    <div class="knoepfe">${m ? `<button class="knopf" data-k="abschluss">Monatsabschluss ${h(mn(m, false))} speichern</button><button class="knopf leise" id="schliessen">Fertig</button>` : '<button class="knopf" id="schliessen">Fertig</button>'}</div>`);
 }
 /** „Wofür“ nachtragen: Liste mit Vorschlägen, Buchungen anhaken → „Ausgewählte ändern“ → zurück zur neu sortierten Liste → alle übernehmen. */
 const OHNE = 'Ohne Vorschlag';
@@ -560,11 +725,11 @@ function wofuerAlleDialog(neu = true) {
     document.querySelectorAll('#menu details[data-gruppe]').forEach((d) => { if (d.open) S.wOffen.add(d.dataset.gruppe); else S.wOffen.delete(d.dataset.gruppe); });
   }
   const plan = S.wPlan;
-  if (!plan.length) { dialog(`<h2 id="menu-titel">Alles zugeordnet</h2><p>Alle Ausgaben haben schon ein „Wofür“.</p><div class="knoepfe"><button class="knopf" id="schliessen">OK</button></div>`); return; }
+  if (!plan.length) { dialog(`<h2 id="menu-titel">Alles zugeordnet</h2><p>Alle Ausgaben haben schon eine Kategorie.</p><div class="knoepfe"><button class="knopf" id="schliessen">OK</button></div>`); return; }
   const mit = plan.filter((x) => x.wofuer);
   const gruppen = [...WL(), OHNE].map((w) => [w, plan.filter((x) => (x.wofuer || OHNE) === w)]).filter(([, l]) => l.length);
-  dialog(`<div class="k-wa"><h2 id="menu-titel">„Wofür“ nachtragen</h2>
-    <p class="hint">Für <b>${mit.length}</b> von ${plan.length} Ausgaben steht ein „Wofür“ bereit. Hake an, was du ändern willst, dann „Ausgewählte ändern“. Gespeichert wird erst mit „Alle übernehmen“, und nur die Spalte „Wofür“.</p>
+  dialog(`<div class="k-wa"><h2 id="menu-titel">Kategorien nachtragen</h2>
+    <p class="hint">Für <b>${mit.length}</b> von ${plan.length} Ausgaben steht eine Kategorie bereit. Hake an, was du ändern willst, dann „Ausgewählte ändern“. Gespeichert wird erst mit „Alle übernehmen“, und nur die Kategorie (Spalte „Wofür“ in der Datei).</p>
     ${gruppen.map(([w, l], gi) => `<details data-gruppe="${h(w)}" ${S.wOffen.has(w) ? 'open' : ''}><summary><b>${h(w)}</b> · ${l.length}× · ${eur(Math.round(l.reduce((s2, x) => s2 + x.betrag, 0) * 100) / 100)}</summary>
       <label class="k-wa-zeile alle"><input type="checkbox" id="k-wg-${gi}" data-gruppe="${h(w)}" ${l.every((x) => S.wWahl.has(x.nr)) ? 'checked' : ''}><span>alle in „${h(w)}“ anhaken</span></label>
       ${l.map((x) => `<label class="k-wa-zeile"><input type="checkbox" id="k-wh-${h(x.nr)}" data-nr="${h(x.nr)}" ${S.wWahl.has(x.nr) ? 'checked' : ''}><span>${h(x.nr)} · ${dk(x.datum)} · ${h(x.text)}${x.vonHand ? ' <i class="k-wa-neu">geändert</i>' : ''}</span><b>${eur(x.betrag)}</b></label>`).join('')}</details>`).join('')}
@@ -580,27 +745,14 @@ function wofuerAendernDialog() {
     <p class="hint">Für jede Buchung einzeln wählen. Mit „Alle auf …“ kannst du alle auf einmal umstellen und danach einzelne wieder ändern.</p>
     ${liste.length > 1 ? `<label class="feld"><span>Alle auf …</span><select id="k-wa-alle"><option value="-">– einzeln wählen –</option>${opts('-')}</select></label>` : ''}
     <div class="k-wa-einzeln">${liste.map((x) => `<div class="k-wa-e"><div class="k-wa-e-kopf"><span>${h(x.nr)} · ${dk(x.datum)} · ${h(x.text)}</span><b>${eur(x.betrag)}</b></div>
-      <select id="k-wa-n-${h(x.nr)}" data-nr="${h(x.nr)}" aria-label="Wofür für ${h(x.nr)}">${opts(x.wofuer)}</select></div>`).join('')}</div>
+      <select id="k-wa-n-${h(x.nr)}" data-nr="${h(x.nr)}" aria-label="Kategorie für ${h(x.nr)}">${opts(x.wofuer)}</select></div>`).join('')}</div>
     <div class="k-wa-leiste"><button class="knopf" data-k="w-setzen">Übernehmen</button><button class="knopf leise" data-k="w-zurueck">Zurück</button></div></div>`);
-}
-function topfBudgetDialog(name, fehler) {
-  const r = K.rechneKai(S.k, C.heute());
-  const t = r.toepfe.find((x) => x.name === name); if (!t) return;
-  const mitTopf = S.k.buchungen.filter((b) => b.topf === name && b.art !== K.UMBUCHUNG);
-  dialog(`<h2 id="menu-titel">„${h(name)}“ als Monatsbudget</h2>
-    <p>Statt zu sparen planst du jeden Monat <b>${eur(t.sparrate)}</b> für „${h(name)}“ ein. Die App zeigt dir, wie viel davon schon verbraucht ist und ob du drüber liegst.</p>
-    <div class="rechnung" style="margin:10px 0">
-      <div class="rz"><span>Topf „${h(name)}“<small>wird entfernt</small></span><b>${eur(t.stand)}</b></div>
-      <div class="rz"><span>Neues Budget<small>Kosten, Bereich „Budget“, ab ${h(mn(r.akt))}</small></span><b>${eur(t.sparrate)}/Monat</b></div>
-    </div>
-    <p class="hint">Der Stand des Topfs (${eur(t.stand)}) zählt danach wieder als frei. In der Vorschau zieht das Budget jeden Monat ${eur(t.sparrate)} ab, im laufenden Monat nur, was noch übrig ist.${mitTopf.length ? ` ${mitTopf.length} Buchung${mitTopf.length > 1 ? 'en' : ''} mit diesem Topf ${mitTopf.length > 1 ? 'zählen' : 'zählt'} danach zum Budget.` : ''} Vorher legt die App eine Sicherungskopie der Datei in OneDrive an.</p>
-    ${knoepfe(fehler, 'Umwandeln').replace('type="submit"', `type="button" data-k="topf-budget-los" data-arg="${h(name)}"`)}`);
 }
 function aufteilenDialog(nr, fehler, werte) {
   const b = S.k.buchungen.find((x) => x.nr === nr); if (!b) return;
-  const teile = werte || [{ betrag: b.betrag, wofuer: b.wofuer || (K.istBudget(S.k, b.posten) ? b.posten : '') || K.wofuerVorschlag(b, S.k) || '' }, { betrag: '', wofuer: '' }];
+  const teile = werte || [{ betrag: b.betrag, wofuer: b.wofuer || (K.altBudgets(S.k).some((x) => x.posten === b.posten) ? b.posten : '') || K.wofuerVorschlag(b, S.k) || '' }, { betrag: '', wofuer: '' }];
   const zeile = (t, i) => `<div class="k-wa-e"><div class="k-wa-e-kopf"><span>${i === 0 ? 'Teil 1 <small>(bleibt ' + h(b.nr) + ')</small>' : 'Teil ' + (i + 1)}</span>${i > 1 ? `<button type="button" class="link" data-k="teil-weg" data-arg="${i}">entfernen</button>` : ''}</div>
-    <div class="k-teil"><input name="tb${i}" inputmode="decimal" placeholder="0,00" value="${t.betrag === '' ? '' : String(t.betrag).replace('.', ',')}" aria-label="Betrag Teil ${i + 1}"><select name="tw${i}" aria-label="Wofür Teil ${i + 1}"><option value="">– Wofür –</option>${WL().map((w) => `<option ${w === t.wofuer ? 'selected' : ''}>${h(w)}</option>`).join('')}</select></div></div>`;
+    <div class="k-teil"><input name="tb${i}" inputmode="decimal" placeholder="0,00" value="${t.betrag === '' ? '' : String(t.betrag).replace('.', ',')}" aria-label="Betrag Teil ${i + 1}"><select name="tw${i}" aria-label="Kategorie Teil ${i + 1}"><option value="">– Kategorie –</option>${WL().map((w) => `<option ${w === t.wofuer ? 'selected' : ''}>${h(w)}</option>`).join('')}</select></div></div>`;
   dialog(`<form id="k-aufteilen" novalidate><h2 id="menu-titel">Buchung aufteilen</h2>
     <p class="hint">${h(b.nr)} · ${dl(b.datum)} · ${h(b.gegen || b.beschreibung || '')} · <b>${eur(b.betrag)}</b>. Teil 1 bleibt in der Buchung, jeder weitere Teil wird eine eigene Zeile („Teil von ${h(b.nr)}“). Zusammen bleibt es ${eur(b.betrag)}, der Kontostand ändert sich nicht.</p>
     <input type="hidden" name="nr" value="${h(nr)}"><input type="hidden" name="n" value="${teile.length}">
@@ -665,56 +817,75 @@ function kursDialog(position, fehler) {
     <input type="hidden" name="zeile" value="${p.zeile}">${knoepfe(fehler)}</form>`);
 }
 
+function limitsDialog(fehler, werte) {
+  const liste = werte || [...K.limits(S.k).map((l) => ({ kategorie: l.kategorie, betrag: l.betrag, bemerkung: l.bemerkung || '' })), { kategorie: '', betrag: '', bemerkung: '' }];
+  const kat = K.kategorieListe(S.k);
+  dialog(`<form id="k-limits" novalidate><h2 id="menu-titel">Limits</h2>
+    <p class="hint">Ein Limit pro Kategorie und Monat. Bei 80 % und beim Erreichen gibt die App einen Hinweis. Die Vorschau zieht nichts davon ab. Leerer Betrag = Limit weg.</p>
+    <input type="hidden" name="n" value="${liste.length}">
+    ${liste.map((l, i) => `<div class="zwei">${auswahl('k' + i, 'Kategorie', [...new Set([...kat, l.kategorie].filter(Boolean))], l.kategorie, '– wählen –')}${feld('b' + i, 'Limit im Monat €', l.betrag === '' ? '' : bt(l.betrag), 'inputmode="decimal"')}</div><input type="hidden" name="m${i}" value="${h(l.bemerkung || '')}">`).join('')}
+    ${knoepfe(fehler, 'Speichern', '<button class="knopf leise" type="button" data-k="limit-zeile">Weiteres Limit</button>')}</form>`);
+}
+const limitsAusForm = (f) => Array.from({ length: Number(f.n.value) }, (_, i) => ({ kategorie: f['k' + i].value, betrag: f['b' + i].value.trim() === '' ? '' : zahl(f['b' + i].value), bemerkung: f['m' + i].value }));
+function katDialog(fehler, wert = '') {
+  dialog(`<form id="k-kat" novalidate><h2 id="menu-titel">Kategorie anlegen</h2><p class="hint">Steht danach beim Eintragen, beim c24-Import und bei den Limits zur Auswahl.</p>
+    ${feld('name', 'Name', wert, 'maxlength="40"')}${knoepfe(fehler, 'Anlegen')}</form>`);
+}
+function abschlussDialog(fehler, x = {}) {
+  const e = S.pruefErg; const m = K.offenerAbschluss(S.k, C.heute());
+  if (!e || !m) return;
+  const hw = K.abschlussHinweise(S.k, m);
+  const info = { export: hw.exportBisEnde ? `✓ letzte Buchung ${dl(hw.letzteBuchung)}` : `letzte Buchung ${dl(hw.letzteBuchung) || '–'}: Export bis Monatsende fehlt vielleicht`,
+    kategorien: hw.ohneKategorie ? `${hw.ohneKategorie} Ausgabe${hw.ohneKategorie > 1 ? 'n' : ''} ohne Kategorie` : '✓ alle haben eine',
+    gemeinsam: hw.gemeinsamOffen == null ? 'kein Soll in „Gemeinsam“' : hw.gemeinsamOffen > 0.005 ? `noch ${eur(hw.gemeinsamOffen)} offen` : '✓ erledigt',
+    stand: e.ok ? '✓ stimmt' : `Abweichung ${e.konten.filter((k) => !k.ok).map((k) => `${anzeigeName(k.name)} ${vz(k.diff ?? 0)}`).join(', ')}` };
+  dialog(`<form id="k-abschluss" novalidate><h2 id="menu-titel">Monatsabschluss ${h(mn(m))}</h2>
+    <p class="hint">Speichert das Ergebnis von „Kontostand prüfen“ (Stand heute, ${dl(C.heute())}) im Blatt „Monatsabschluss“. Hake ab, was erledigt ist.</p>
+    <div class="k-anpassen">${K.ABSCHLUSS_PUNKTE.map(([id, t]) => `<div class="k-ap"><label class="haken"><input type="checkbox" name="c_${id}" ${x['c_' + id] || (id === 'stand' && e.ok) ? 'checked' : ''}><span><b>${h(t)}</b><small>${h(info[id])}</small></span></label></div>`).join('')}</div>
+    ${feld('notiz', 'Notiz (optional)', x.notiz || '')}
+    ${knoepfe(fehler, 'Abschluss speichern')}</form>`);
+}
+
 // ---------------------------------------------------------------- Ereignisse
 export async function klick(t) {
   const a = t.dataset.k;
   if (!a) return false;
   const arg = t.dataset.arg;
   switch (a) {
-    case 'tab': S.tab = arg; merk('ug.ktab', arg); S.meldung = null; C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'tab': zuTab(arg); return true;
+    case 'seite': S.seite = arg; S.anpassen = null; S.tab = 'k-mehr'; merk('ug.ktab', S.tab); S.meldung = null; C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'seite-zu': S.seite = null; C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'anpassen': S.anpassen = null; S.seite = 'anpassen'; S.tab = 'k-mehr'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'anpassen-zu': S.anpassen = null; S.seite = null; C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'kachel-hoch': case 'kachel-runter': S.anpassen = K.kachelSchieben(S.anpassen || kachelListe(), arg, a === 'kachel-hoch' ? -1 : 1); C.zeichne(); return true;
+    case 'anpassen-standard': S.anpassen = K.kachelnStandard(kachelIds()); C.zeichne(); return true;
+    case 'anpassen-speichern': { const l = S.anpassen || kachelListe(); S.anpassen = null; S.seite = null; S.tab = 'k-uebersicht'; merk('ug.ktab', S.tab); await einstSpeichern({ kacheln: l }, 'Übersicht angepasst.'); window.scrollTo(0, 0); return true; }
+    case 'thema': themaSetzen(arg); C.zeichne(); return true;
+    case 'gem-menu': C.zeigeMenu(); return true;
+    case 'luecke-auf': S.lueckeAuf = !S.lueckeAuf; C.zeichne(); return true;
+    case 'vmonat-auf': if (!K.funktionAn(einst(), 'vorschau')) return true; S.offen = arg; zuTab('k-vorschau'); requestAnimationFrame(() => document.querySelector(`[data-k="vmonat"][data-arg="${arg}"]`)?.scrollIntoView({ block: 'start' })); return true;
+    case 'limits': limitsDialog(); return true;
+    case 'limit-zeile': { const f = document.getElementById('k-limits'); const l = limitsAusForm(f); l.push({ kategorie: '', betrag: '', bemerkung: '' }); limitsDialog(null, l); return true; }
+    case 'limits-uebernehmen': await schreiben(async (api) => { await blattSicherstellen(api, 'limits'); await blockSchreiben(api, 'limits', limitZeilen(K.limits(S.k))); }, 'Limits ins Blatt „Limits“ übernommen. Die alten Budget-Zeilen bleiben unverändert in „Kosten“.', { knopf: t }); return true;
+    case 'kat-neu': katDialog(); return true;
+    case 'kat-weg': { const l = (einst().kategorien || []).filter((x) => x !== arg); await einstSpeichern({ kategorien: l }, `Kategorie „${arg}“ entfernt (Buchungen damit bleiben unverändert).`); return true; }
+    case 'abschluss': abschlussDialog(); return true;
     case 'neu-laden': if (C.menu.open) C.menu.close(); C.od.privatOrdnerVergessen('Kai'); S.status = 'aus'; await laden({ immer: true }); return true;
     case 'eintragen': eintragenDialog(); return true;
     case 'pruefen': pruefDialog(); return true;
-    case 'pruef-ansehen': if (C.menu.open) C.menu.close(); S.suche = arg; S.fMonat = ''; S.fArt = ''; S.fWofuer = ''; S.tab = 'k-buchungen'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'pruef-ansehen': if (C.menu.open) C.menu.close(); S.suche = arg; S.fMonat = ''; S.fArt = ''; S.fWofuer = ''; S.seite = null; S.tab = 'k-buchungen'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
     case 'wzeit': S.wZeit = arg; C.zeichne(); return true;
-    case 'wofuer-filter': S.fWofuer = arg; S.suche = ''; S.fArt = ''; S.fMonat = S.tab === 'k-ausgaben' ? S.aMonat : S.wZeit === 'monat' ? C.heute().slice(0, 7) : ''; S.tab = 'k-buchungen'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'wofuer-filter': S.seite = null; S.fWofuer = arg; S.suche = ''; S.fArt = ''; S.fMonat = S.tab === 'k-ausgaben' ? S.aMonat : S.wZeit === 'monat' ? C.heute().slice(0, 7) : ''; S.tab = 'k-buchungen'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
     case 'wofuer-alle': wofuerAlleDialog(); return true;
-    case 'topf-budget': topfBudgetDialog(arg); return true;
     case 'aufteilen': aufteilenDialog(arg); return true;
     case 'teil-dazu': case 'teil-weg': {
       const f = document.getElementById('k-aufteilen'); const tl = teileAusForm(f);
       if (a === 'teil-dazu') tl.push({ betrag: '', wofuer: '' }); else tl.splice(Number(arg), 1);
       aufteilenDialog(f.nr.value, null, tl); return true;
     }
-    case 'ausgaben': S.tab = 'k-ausgaben'; S.aMonat = S.aMonat || C.heute().slice(0, 7); C.zeichne(); window.scrollTo(0, 0); return true;
+    case 'ausgaben': if (!K.funktionAn(einst(), 'ausgaben')) return true; S.seite = null; S.tab = 'k-ausgaben'; S.aMonat = S.aMonat || C.heute().slice(0, 7); C.zeichne(); window.scrollTo(0, 0); return true;
     case 'a-monat': S.aMonat = arg; C.zeichne(); return true;
     case 'a-zurueck': S.tab = 'k-uebersicht'; merk('ug.ktab', S.tab); C.zeichne(); window.scrollTo(0, 0); return true;
-    case 'topf-budget-los': {
-      const name = arg;
-      const r = K.rechneKai(S.k, C.heute()); const tp = r.toepfe.find((x) => x.name === name);
-      if (!tp) return true;
-      if (K.istBudget(S.k, name)) { topfBudgetDialog(name, `Ein Budget „${name}“ gibt es schon.`); return true; }
-      const mitTopf = S.k.buchungen.filter((b) => b.topf === name && b.art !== K.UMBUCHUNG);
-      await schreiben(async (api) => {
-        await C.od.sicherungAnlegen(S.ort, 'vor-Budget-' + name.replace(/[^A-Za-z0-9äöüÄÖÜß-]+/g, '_'));
-        const [tv, tb] = K.BEREICHE.toepfe;
-        const tn = (await api.lies('Töpfe', `B${tv}:B${tb}`)).values.map((x) => String(x[0] ?? ''));
-        const ti = tn.indexOf(name); if (ti < 0) throw new Error(`Topf „${name}“ nicht gefunden.`);
-        const [kv, kb] = K.BEREICHE.kosten;
-        const kn = (await api.lies('Kosten', `B${kv}:B${kb}`)).values; const ki = kn.findIndex((x) => x[0] === '' || x[0] == null);
-        if (ki < 0) throw new Error('Im Blatt „Kosten“ ist keine Zeile mehr frei.');
-        const kz = kv + ki;
-        const ids = (await api.lies('Kosten', `A${kv}:A${kb}`)).values.map((x) => String(x[0] || '')).filter((x) => /^K\d+$/.test(x)).map((x) => Number(x.slice(1)));
-        await api.schreib('Kosten', `A${kz}:J${kz}`, [['K' + String(Math.max(0, ...ids) + 1).padStart(2, '0'), name, K.BUDGET, tp.sparrate, 'monatlich', '', '', S.k.konto.name, mSer(r.akt), '']]);
-        await api.schreib('Kosten', `N${kz}`, [[`Monatsbudget, vorher Topf (umgestellt ${dl(C.heute())}).`]]);
-        for (const b of mitTopf) { const z = await zeileVonNr(api, b.nr); await api.schreib('Buchungen', `J${z}`, [['']]); if (!b.posten || b.posten === 'Sonstiges') await api.schreib('Buchungen', `I${z}`, [[name]]); }
-        const tz = tv + ti;
-        await api.schreib('Töpfe', `A${tz}:F${tz}`, [['', '', '', '', '', '']]);
-        await api.schreib('Töpfe', `J${tz}:K${tz}`, [['', '']]);
-      }, `„${name}“ ist jetzt ein Monatsbudget (${eur(tp.sparrate)}). Sicherung liegt in OneDrive.`, { knopf: t, dialogFehler: (fe) => topfBudgetDialog(name, fe) });
-      S.topf = null;
-      return true;
-    }
     case 'w-aendern': wofuerAlleDialog(false); wofuerAendernDialog(); return true;
     case 'w-zurueck': wofuerAlleDialog(false); return true;
     case 'w-setzen': {
@@ -747,7 +918,7 @@ export async function klick(t) {
           for (const p of bud) { const i = a.indexOf(p.nr); if (i >= 0 && (!iw[i] || iw[i] === 'Sonstiges')) await api.schreib('Buchungen', `I${von + i}`, [[p.wofuer]]); }
         }
         return n;
-      }, (n) => `„Wofür“ bei ${n} Buchungen eingetragen.`, { knopf: t });
+      }, (n) => `Kategorie bei ${n} Buchungen eingetragen.`, { knopf: t });
       S.wPlan = null;
       return true;
     }
@@ -757,7 +928,7 @@ export async function klick(t) {
     case 'topf-buchen': eintragenDialog(null, { art: arg, topf: S.topf, posten: 'Sonstiges' }); return true;
     case 'umbuchen': { const sp = S.k.spartopf; eintragenDialog(null, { art: K.UMBUCHUNG, konto: S.k.konto.name, gegen: sp?.name, betrag: Number(arg) || '', beschreibung: 'Sparraten aufs Spartopf' }); return true; }
     case 'ruecklage': { const r = K.rechneKai(S.k, C.heute()); ruecklageDialog(r.inRuecklage || r.behalten); return true; }
-    case 'vmonat': S.offen = S.offen === arg ? null : arg; if (S.tab !== 'k-vorschau') { S.tab = 'k-vorschau'; merk('ug.ktab', S.tab); } C.zeichne(); return true;
+    case 'vmonat': if (!K.funktionAn(einst(), 'vorschau')) return true; S.offen = S.offen === arg ? null : arg; if (S.tab !== 'k-vorschau') { S.tab = 'k-vorschau'; merk('ug.ktab', S.tab); } C.zeichne(); return true;
     case 'bearbeiten': { const b = S.k.buchungen.find((x) => x.nr === arg); eintragenDialog(null, { ...b, betrag: b.betrag }); return true; }
     case 'loeschen-frage': {
       const b = S.k.buchungen.find((x) => x.nr === arg);
@@ -827,7 +998,9 @@ export async function absenden(form) {
           if ((b.wofuer || '') !== (alt.wofuer || '')) { await wofuerKopf(api); await api.schreib('Buchungen', `${W}${z}`, [[b.wofuer || '']]); }
         }, `${x.nr} geändert.`, { knopf, dialogFehler: (fe) => eintragenDialog(fe, { ...x }) });
       } else {
-        await schreiben(async (api) => (await buchungenAnhaengen(api, [{ ...b, quelle: 'manuell' }]))[0], (nr) => `${nr} eingetragen: ${b.posten || b.gegen || b.art}, ${eur(betrag)}.`, { knopf, dialogFehler: (fe) => eintragenDialog(fe, { ...x }) });
+        const lh = b.art === 'Ausgabe' && b.wofuer && K.eigeneKonten(S.k).some((kt) => kt.name === b.konto) ? K.limitHinweis(S.k, b.wofuer, b.giltFuer, betrag, C.heute()) : null;
+        const lt = !lh ? '' : lh.stufe === 'fast' ? ` Limit „${lh.kategorie}“ fast erreicht: ${eur(lh.summe)} von ${eur(lh.limit)}.` : lh.stufe === 'erreicht' ? ` Limit „${lh.kategorie}“ erreicht: ${eur(lh.summe)} von ${eur(lh.limit)}.` : ` Limit „${lh.kategorie}“ überschritten: ${eur(lh.summe)} von ${eur(lh.limit)}.`;
+        await schreiben(async (api) => (await buchungenAnhaengen(api, [{ ...b, quelle: 'manuell' }]))[0], (nr) => `${nr} eingetragen: ${b.posten || b.gegen || b.art}, ${eur(betrag)}.${lt}`, { knopf, dialogFehler: (fe) => eintragenDialog(fe, { ...x }) });
       }
       return true;
     }
@@ -860,6 +1033,39 @@ export async function absenden(form) {
       const e = K.kontenPruefen(S.k, bank);
       merk('ug.kpruef', { zeit: new Date().toISOString(), ok: e.ok, konten: e.konten.map(({ name, bank: b, stand, diff, ok }) => ({ name, bank: b, stand, diff, ok })) });
       pruefErgebnis(e); C.zeichne();
+      return true;
+    }
+    case 'k-limits': {
+      const alle = limitsAusForm(form);
+      const l = alle.filter((x) => x.kategorie && x.betrag !== '');
+      if (l.some((x) => !(x.betrag > 0))) { limitsDialog('Bitte jedes Limit als Betrag über 0 angeben (oder leer lassen).', alle); return true; }
+      if (new Set(l.map((x) => x.kategorie)).size !== l.length) { limitsDialog('Jede Kategorie bitte nur einmal.', alle); return true; }
+      await schreiben(async (api) => { await blattSicherstellen(api, 'limits'); await blockSchreiben(api, 'limits', limitZeilen(l)); },
+        `${l.length} Limit${l.length === 1 ? '' : 's'} gespeichert.`, { knopf, dialogFehler: (fe) => limitsDialog(fe, alle) });
+      return true;
+    }
+    case 'k-kat': {
+      const n = String(x.name || '').trim();
+      if (!n) { katDialog('Bitte einen Namen eingeben.'); return true; }
+      if (K.kategorieListe(S.k).some((w) => w.toLowerCase() === n.toLowerCase()) || K.WOFUER_EXTRA.includes(n)) { katDialog(`„${n}“ gibt es schon.`, n); return true; }
+      if (C.menu.open) C.menu.close();
+      await einstSpeichern({ kategorien: [...(einst().kategorien || []), n] }, `Kategorie „${n}“ angelegt.`);
+      return true;
+    }
+    case 'k-abschluss': {
+      const e = S.pruefErg; const m = K.offenerAbschluss(S.k, C.heute());
+      if (!e || !m) return true;
+      const liste = K.ABSCHLUSS_PUNKTE.map(([id, t]) => `${x['c_' + id] ? '✓' : '–'} ${t}`).join(' · ');
+      const zeilen = e.konten.map((kt) => [mSer(m), kt.name, kt.bank, kt.stand ?? '', kt.diff ?? '', ser(C.heute()), liste, x.notiz || '']);
+      await schreiben(async (api) => {
+        await blattSicherstellen(api, 'abschluss');
+        const [von, bis] = K.BEREICHE.abschluss;
+        const a = (await api.lies('Monatsabschluss', `A${von}:A${bis}`)).values;
+        let letzte = -1; a.forEach((r, i) => { if (r[0] !== '' && r[0] != null) letzte = i; });
+        const start = von + letzte + 1;
+        if (start + zeilen.length - 1 > bis) throw new Error('Im Blatt „Monatsabschluss“ ist kein Platz mehr.');
+        await api.schreib('Monatsabschluss', `A${start}:H${start + zeilen.length - 1}`, zeilen);
+      }, `Monatsabschluss ${mn(m)} gespeichert.`, { knopf, dialogFehler: (fe) => abschlussDialog(fe, x) });
       return true;
     }
     case 'k-ruecklage': {
@@ -972,6 +1178,8 @@ export async function dateiGewaehlt(id, datei) {
   C.zeichne();
 }
 export function eingabe(el) {
+  if (el.id?.startsWith('k-kachel-')) { const id = el.id.slice(9); const l = S.anpassen || kachelListe(); S.anpassen = l.map((x) => (x.id === id && x.id !== 'frei' ? { ...x, an: el.checked } : x)); C.zeichne(); return true; }
+  if (el.id?.startsWith('k-fkt-')) { const id = el.id.slice(6); const f = { ...(einst().funktionen || {}), [id]: el.checked }; einstSpeichern({ funktionen: f }, `„${K.FUNKTIONEN.find((x) => x.id === id)?.name}“ ${el.checked ? 'eingeschaltet' : 'ausgeschaltet'}.`); return true; }
   if (el.id === 'k-suche') { S.suche = el.value; const pos = el.selectionStart; C.zeichne(); const n = document.getElementById('k-suche'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } return true; }
   if (el.id === 'k-fmonat') { S.fMonat = el.value; C.zeichne(); return true; }
   if (el.id === 'k-fart') { S.fArt = el.value; C.zeichne(); return true; }

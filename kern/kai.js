@@ -20,10 +20,18 @@ export const POSTEN_EXTRA = ['Überweisung Gemeinschaftskonto', 'Trade Republic 
 export const GK_POSTEN = 'Überweisung Gemeinschaftskonto';
 export const RUECKLAGE = 'Rücklage Lücke';
 /** „Wofür“ (Buchungen!Q): wofür das Geld ausgegeben wurde – unabhängig von Töpfen und Posten, nur zum Auswerten. */
-export const WOFUER = ['Freizeit', 'Essen & Trinken', 'Lieferdienst', 'Shopping', 'Amazon', 'Haushalt', 'Handwerksbedarf', 'Auto', 'Kinder', 'Abos', 'Geschenke', 'Gesundheit', 'Bargeld', 'Sonstiges'];
+/** In der App heißt das Feld „Kategorie“ (ab 0.18.0), die Spaltenüberschrift in der Datei bleibt „Wofür“. */
+export const WOFUER = ['Freizeit', 'Essen & Trinken', 'Lieferdienst', 'Shopping', 'Amazon', 'Haushalt', 'Drogerie', 'Handwerksbedarf', 'Auto', 'Kinder', 'Abos', 'Geschenke', 'Gesundheit', 'Bargeld', 'Sonstiges'];
 export const WOFUER_SPALTE = 'Q';
 // Zeilenbereiche der Datei (so angelegt, Formeln dort vorbelegt)
-export const BEREICHE = { buchungen: [5, 1004], kosten: [5, 24], einnahmen: [5, 12], toepfe: [5, 14], gemeinsam: [5, 18], depot: [17, 56], tr: [5, 2004], offen: [5, 200] };
+export const BEREICHE = { buchungen: [5, 1004], kosten: [5, 24], einnahmen: [5, 12], toepfe: [5, 14], gemeinsam: [5, 18], depot: [17, 56], tr: [5, 2004], offen: [5, 200],
+  einstellungen: [5, 60], limits: [5, 60], abschluss: [5, 400] };
+/** Neue Blätter ab 0.18.0 (hinten angehängt, Kopf in Zeile 4, Daten ab Zeile 5). Fehlen sie, legt die App sie beim ersten Speichern an. */
+export const NEUE_BLAETTER = {
+  einstellungen: { name: 'Einstellungen', titel: 'Einstellungen der App (Kacheln, Funktionen, eigene Kategorien)', kopf: ['Schlüssel', 'Wert'] },
+  limits: { name: 'Limits', titel: 'Limits je Kategorie und Monat (warnen nur, werden nicht vorab abgezogen)', kopf: ['Kategorie', 'Limit im Monat', 'Bemerkung'] },
+  abschluss: { name: 'Monatsabschluss', titel: 'Monatsabschlüsse aus „Kontostand prüfen“', kopf: ['Monat', 'Konto', 'Stand laut Bank', 'Stand laut App', 'Differenz', 'Geprüft am', 'Checkliste', 'Notiz'] },
+};
 
 /** Liest Kai_Privat.xlsx in ein Modell (Zeilennummern bleiben für das Schreiben erhalten). */
 export async function leseKai(daten) {
@@ -66,6 +74,15 @@ export async function leseKai(daten) {
     kurs: zahl(c('G')), betrag: zahl(c('H')) || 0, gebuehr: zahl(c('I')), steuer: zahl(c('J')), beschreibung: txt(c('K')), id: txt(c('L')),
   }), 'B');
   const offen = zeilen('Offene Punkte', BEREICHE.offen, (c) => ({ nr: c('A'), punkt: txt(c('B')), status: txt(c('C')) || 'offen', notiz: txt(c('D')) }), 'B');
+  // Neue Blätter (0.18.0): dürfen fehlen
+  const hat = (n) => mappe.blaetter.has(n);
+  const optional = (key, fn, pflicht) => (hat(NEUE_BLAETTER[key].name) ? zeilen(NEUE_BLAETTER[key].name, BEREICHE[key], fn, pflicht) : null);
+  const einstellungenRoh = optional('einstellungen', (c) => ({ schluessel: txt(c('A')), wert: c('B') == null ? null : String(c('B')) }), 'A');
+  const einstellungen = {};
+  for (const e of einstellungenRoh || []) { try { einstellungen[e.schluessel] = JSON.parse(e.wert); } catch { einstellungen[e.schluessel] = e.wert; } }
+  const limitsBlatt = optional('limits', (c) => ({ kategorie: txt(c('A')), betrag: zahl(c('B')), bemerkung: txt(c('C')) }), 'A');
+  const abschluesse = optional('abschluss', (c) => ({ monat: mon(c('A')), konto: txt(c('B')), bank: zahl(c('C')), app: zahl(c('D')), diff: zahl(c('E')),
+    am: excelDatum(c('F')), checkliste: txt(c('G')), notiz: txt(c('H')) }), 'A');
   const S = bl('Start');
   const V = bl('Vorschau');
   const sp = 'CDEFGHIJKLMN'.split('');
@@ -76,6 +93,7 @@ export async function leseKai(daten) {
   };
   return {
     konto, konten, spartopf, buchungen, kosten, einnahmen, toepfe, gemeinsam, depot, tr, offen,
+    einstellungen, einstellungenBlatt: einstellungenRoh != null, limitsBlatt, abschluesse: abschluesse || [], abschlussBlatt: abschluesse != null,
     start: { rechnenAb: mon(S.get('D4')), planMonat: mon(S.get('C5')), horizont: zahl(S.get('C6')) || 3 }, excel,
   };
 }
@@ -119,7 +137,8 @@ export function toepfeStand(k, akt) {
  * @param {object} k aus leseKai()
  * @param {string} heute 'JJJJ-MM-TT'
  */
-export function rechneKai(k, heute, { horizont } = {}) {
+export function rechneKai(k, heute, { horizont, mitAltBudgets = false } = {}) {
+  const fest = mitAltBudgets ? k.kosten : festeKosten(k);
   const akt = k.start.rechnenAb || heute.slice(0, 7);
   const H = horizont || k.start.horizont || 3;
   const stand = kontostand(k);
@@ -140,7 +159,7 @@ export function rechneKai(k, heute, { horizont } = {}) {
     const g = k.gemeinsam.find((x) => x.monat === m);
     const gIst = ist(k, GK_POSTEN, m, 'Ausgabe');
     const gemeinsam = { soll: g?.soll ?? null, ist: gIst, rest: g ? r2(Math.max(0, (g.soll || 0) - gIst)) : 0, fehlt: !g };
-    const kosten = k.kosten.map((x) => ({ posten: x.posten, id: x.id, plan: plan(x, m), ist: ist(k, x.posten, m, 'Ausgabe') }))
+    const kosten = fest.map((x) => ({ posten: x.posten, id: x.id, tag: x.tag ?? null, plan: plan(x, m), ist: ist(k, x.posten, m, 'Ausgabe') }))
       .map((x) => ({ ...x, rest: r2(Math.max(0, x.plan - x.ist)) }));
     const sparraten = k.toepfe.map((t) => ({ name: t.name, betrag: t.frei || m <= akt || (t.ab && m < t.ab) || (t.bis && m > t.bis) ? 0 : t.sparrate }));
     const s = { einnahmen: summe(einnahmen, (x) => x.rest), gemeinsam: gemeinsam.rest, kosten: summe(kosten, (x) => x.rest), sparraten: summe(sparraten, (x) => x.betrag) };
@@ -224,14 +243,14 @@ const WOFUER_REGELN = [
   ['Essen & Trinken', /netto|rewe|edeka|aldi|lidl|kaufland|penny|wurst|bäcker|baecker|metzger|restaurant|café|cafe|imbiss|döner|lebensmittel/i],
   ['Kinder', /kita|spielzeug|mytoys|kinder/i],
   ['Geschenke', /geschenk/i],
-  ['Haushalt', /dm\b|rossmann|ikea|haushalt|drogerie/i],
+  ['Drogerie', /\bdm\b|dm-drogerie|rossmann|müller drogerie|drogerie/i],
+  ['Haushalt', /ikea|haushalt/i],
   ['Shopping', /shopping|bekleidung|zalando|h&m|new yorker|primark|kleidung/i],
   ['Freizeit', /freizeit|kino|schwimmbad|zoo|museum|tickets?\b|eventim|steam|playstation|nintendo/i],
 ];
 /** Vorschlag fürs „Wofür“ aus Gegenüber, Beschreibung und Bank-Kategorie. Nur für Ausgaben ohne festen Posten. */
 export function wofuerVorschlag(b, k) {
   if (!b || b.art !== 'Ausgabe' || b.posten === GK_POSTEN || b.posten === 'Trade Republic (extra)') return null;
-  if (k && b.posten && istBudget(k, b.posten)) return b.posten;
   // Gelernt: was zuletzt beim selben Gegenüber gewählt wurde
   const g = (b.gegen || '').trim().toLowerCase();
   if (k && g.length > 2) {
@@ -252,12 +271,59 @@ export const WOFUER_EXTRA = ['Gemeinschaftskonto', 'Trade Republic', 'Feste Post
 
 // ---------------------------------------------------------------- Budgets und Aufteilen
 
-/** Bereich in Kosten!C, der einen Posten zum Monatsbudget macht (z. B. Dampfen). Plan = Budget, Ist = Ausgaben mit diesem Posten. */
+/**
+ * Bereich in Kosten!C, mit dem bis 0.17.0 ein Posten ein Monatsbudget war (z. B. Dampfen).
+ * Ab 0.18.0 gibt es keine Budgets mehr: Diese Zeilen bleiben unangetastet in der Datei, zählen aber nicht mehr
+ * in der Vorschau und nicht als feste Kosten. Sie werden als Limits übernommen (siehe limits()).
+ */
 export const BUDGET = 'Budget';
-export const budgets = (k) => (k.kosten || []).filter((x) => x.posten && x.bereich === BUDGET);
-/** Auswahl fürs „Wofür“: erst die Budgets, dann die feste Liste. Ein Budget als „Wofür“ setzt auch den Posten. */
-export const wofuerListe = (k) => [...new Set([...budgets(k).map((x) => x.posten), ...WOFUER])];
-export const istBudget = (k, name) => budgets(k).some((x) => x.posten === name);
+export const altBudgets = (k) => (k.kosten || []).filter((x) => x.posten && x.bereich === BUDGET);
+/** @deprecated Name aus 0.16/0.17, liefert die alten Budget-Zeilen. */
+export const budgets = altBudgets;
+/** Feste Kosten ohne alte Budget-Zeilen (für Vorschau, Plan/Ist, Verwaltung). */
+export const festeKosten = (k) => (k.kosten || []).filter((x) => x.bereich !== BUDGET);
+/** Seit 0.18.0 setzt eine Kategorie nie mehr den Posten. */
+export const istBudget = () => false;
+
+/** Limits: aus dem Blatt „Limits“, solange es fehlt aus den alten Budgets (gleicher Name, gleicher Betrag). */
+export function limits(k) {
+  if (k.limitsBlatt) return k.limitsBlatt.filter((l) => l.kategorie && l.betrag > 0).map((l) => ({ ...l, ausBudget: false }));
+  return altBudgets(k).filter((x) => x.betrag > 0).map((x) => ({ kategorie: x.posten, betrag: x.betrag, bemerkung: 'aus Monatsbudget übernommen', ausBudget: true }));
+}
+/** Auswahl für die Kategorie: feste Liste, eigene Kategorien (Einstellungen) und Kategorien mit Limit. */
+export function kategorieListe(k) {
+  const eigene = Array.isArray(k.einstellungen?.kategorien) ? k.einstellungen.kategorien : [];
+  const vorher = WOFUER.filter((w) => w !== 'Sonstiges');
+  return [...new Set([...vorher, ...eigene, ...limits(k).map((l) => l.kategorie), 'Sonstiges'].filter(Boolean))];
+}
+export const wofuerListe = kategorieListe;
+/**
+ * Stand eines Limits im Monat m. Ist = Ausgaben der eigenen Konten mit dieser Kategorie (Gilt für = m).
+ * Warnt nur: ab 80 % „fast“, ab 100 % „erreicht“, darüber „drueber“. Nichts davon geht in die Vorschau.
+ */
+export function limitStand(k, l, m, heute) {
+  const namen = new Set(eigeneKonten(k).map((kt) => kt.name));
+  const falsch = new Set(falscheUmbuchungen(k));
+  const ausg = k.buchungen.filter((b) => b.art === 'Ausgabe' && namen.has(b.konto) && !falsch.has(b) && b.giltFuer === m && wofuerGruppe(b, k) === l.kategorie);
+  const verbraucht = summe(ausg, (b) => b.betrag);
+  const lauf = heute && heute.slice(0, 7) === m;
+  const anteilZeit = lauf ? Math.min(1, Number(heute.slice(8, 10)) / tageImMonat(m)) : (heute && m < heute.slice(0, 7) ? 1 : 0);
+  const anteil = l.betrag > 0 ? verbraucht / l.betrag : 0;
+  return { name: l.kategorie, limit: l.betrag, plan: l.betrag, verbraucht, rest: r2(l.betrag - verbraucht), drueber: r2(Math.max(0, verbraucht - l.betrag)),
+    anteil: anteilZeit, verbrauchtAnteil: anteil, sollBisHeute: r2(l.betrag * anteilZeit), anzahl: ausg.length, buchungen: ausg,
+    status: verbraucht > l.betrag + 0.005 ? 'drueber' : anteil >= 1 - 1e-9 ? 'erreicht' : anteil >= 0.8 ? 'fast' : 'ok' };
+}
+/** Hinweis nach einer neuen Ausgabe: wurde mit ihr eine Schwelle (80 % / 100 %) überschritten? */
+export function limitHinweis(k, kategorie, monat, neuBetrag, heute) {
+  const l = limits(k).find((x) => x.kategorie === kategorie);
+  if (!l) return null;
+  const vorher = limitStand(k, l, monat, heute).verbraucht;
+  const nachher = r2(vorher + neuBetrag);
+  if (nachher > l.betrag + 0.005 && vorher <= l.betrag + 0.005) return { stufe: 'drueber', kategorie, limit: l.betrag, summe: nachher };
+  if (nachher >= l.betrag - 0.005 && vorher < l.betrag - 0.005) return { stufe: 'erreicht', kategorie, limit: l.betrag, summe: nachher };
+  if (nachher >= 0.8 * l.betrag && vorher < 0.8 * l.betrag) return { stufe: 'fast', kategorie, limit: l.betrag, summe: nachher };
+  return null;
+}
 
 /** Teil-Zeilen einer aufgeteilten Buchung: Quelle „Aufteilung“, Kommentar beginnt mit „Teil von P0001“. */
 export const istTeil = (b) => b.quelle === 'Aufteilung' && /^Teil von P\d+/.test(b.kommentar || '');
@@ -323,7 +389,7 @@ export function referenzWerte(k, akt) {
 /** Gruppe einer Ausgabe in der Auswertung: „Wofür“, sonst nach Posten, sonst „Nicht zugeordnet“. */
 export function wofuerGruppe(b, k) {
   if (b.wofuer) return b.wofuer;
-  if (k && b.posten && istBudget(k, b.posten)) return b.posten;
+  if (k && b.posten && altBudgets(k).some((x) => x.posten === b.posten)) return b.posten; // bis 0.17.0 mit Budget-Posten gebucht
   if (b.posten === GK_POSTEN) return 'Gemeinschaftskonto';
   if (b.posten === 'Trade Republic (extra)') return 'Trade Republic';
   if (b.posten && b.posten !== 'Sonstiges') return 'Feste Posten';
@@ -349,7 +415,8 @@ export function planIst(k, m) {
   const ein = { plan: summe(k.einnahmen, (e) => plan(e, m)), ist: summe(k.buchungen.filter((b) => b.giltFuer === m && b.art === 'Einnahme'), (b) => b.betrag) };
   const g = k.gemeinsam.find((x) => x.monat === m);
   const gem = { plan: g?.soll || 0, ist: ist(k, GK_POSTEN, m, 'Ausgabe') };
-  const kos = { plan: summe(k.kosten, (x) => plan(x, m)), ist: summe(k.kosten, (x) => ist(k, x.posten, m, 'Ausgabe')) };
+  const fest = festeKosten(k);
+  const kos = { plan: summe(fest, (x) => plan(x, m)), ist: summe(fest, (x) => ist(k, x.posten, m, 'Ausgabe')) };
   const spar = { plan: summe(k.toepfe, (t) => t.sparrate), ist: -summe(k.buchungen.filter((b) => b.giltFuer === m && b.art === 'Ausgabe'), topfeffekt) };
   const ausgaben = summe(k.buchungen.filter((b) => b.giltFuer === m && b.art === 'Ausgabe'), (b) => b.betrag);
   const variabel = { plan: null, ist: r2(ausgaben - gem.ist - kos.ist - spar.ist) };
@@ -441,7 +508,7 @@ export function vorschlag(z, kk, { gkEndung, regeln = [] } = {}) {
     else if (art === 'Ausgabe' && gkEndung && (z.iban || '').replace(/\s/g, '').endsWith(gkEndung)) { posten = GK_POSTEN; gegen = 'Gemeinschaftskonto'; }
     else if (/trade\s?republic/i.test(text)) posten = 'Trade Republic (extra)';
     else {
-      const p = [...kk.kosten, ...kk.einnahmen].find((x) => x.posten && x.posten.length > 3 && text.toLowerCase().includes(x.posten.toLowerCase()));
+      const p = [...festeKosten(kk), ...kk.einnahmen].find((x) => x.posten && x.posten.length > 3 && text.toLowerCase().includes(x.posten.toLowerCase()));
       if (p) posten = p.posten;
     }
   }
@@ -454,7 +521,6 @@ export function vorschlag(z, kk, { gkEndung, regeln = [] } = {}) {
     kommentar: null, quelle: 'CSV', importId: z.id,
   };
   v.wofuer = wofuerVorschlag(v, kk);
-  if (v.wofuer && !v.posten && istBudget(kk, v.wofuer)) v.posten = v.wofuer;
   return v;
 }
 
@@ -599,3 +665,113 @@ export function trNeu(roh, k) {
     .map((p) => { const n = neu.find((x) => x.position === p); return { position: p, name: n?.name || p, art: /krypto|crypto/i.test(n?.beschreibung || '') ? 'Krypto' : null }; });
   return { neu: neu.map(({ _zeit, ...r }) => r), unbekannt, positionenNeu };
 }
+
+// ---------------------------------------------------------------- Lücken-Hinweis (0.18.0, nur Darstellung vorhandener Werte)
+
+/**
+ * Details zur Lücke aus rechneKai(): betroffene Monate mit Fehlbetrag, tiefster Punkt, Auslöser und die größten
+ * Posten (Rest-Plan wie in der Vorschau). Rechnet nichts neu, liest nur r.vorschau.
+ * @returns {null|{monate:Array, tiefster:{monat,betrag}, behalten:number, inRuecklage:number, fehlbetrag:number}}
+ */
+export function lueckeDetails(r, k, { anzahlPosten = 5 } = {}) {
+  if (!r || r.fehlt || r.status !== 'Lücke') return null;
+  const imH = r.vorschau.filter((v) => v.imHorizont);
+  const tage = new Map(festeKosten(k || { kosten: [] }).map((x) => [x.posten, x.tag ?? null]));
+  const monate = imH.filter((v) => v.status === 'Lücke').map((v) => {
+    const unterFreiEnde = v.freiEnde < 0;
+    const unterVariabel = v.variabel < 0;
+    const posten = [
+      ...v.kosten.filter((x) => x.rest > 0).map((x) => ({ art: 'Feste Kosten', name: x.posten, betrag: x.rest, tag: x.tag ?? tage.get(x.posten) ?? null })),
+      ...(v.gemeinsam.rest > 0 ? [{ art: 'Überweisung', name: GK_POSTEN, betrag: v.gemeinsam.rest, tag: null }] : []),
+      ...v.sparraten.filter((s) => s.betrag > 0).map((s) => ({ art: 'Sparrate', name: s.name, betrag: s.betrag, tag: null })),
+    ].sort((a, b) => b.betrag - a.betrag).slice(0, anzahlPosten);
+    return {
+      monat: v.monat, fehlbetrag: r2(Math.max(0, -v.freiEnde, -v.variabel)), freiEnde: v.freiEnde, variabel: v.variabel,
+      ausloeser: unterFreiEnde && unterVariabel ? 'beides' : unterFreiEnde ? 'frei-ende' : 'variabel', posten,
+    };
+  });
+  const tief = imH.reduce((a, v) => (v.freiEnde < a.freiEnde ? v : a), imH[0]);
+  return { monate, tiefster: { monat: tief.monat, betrag: tief.freiEnde }, behalten: r.behalten, inRuecklage: r.inRuecklage, fehlbetrag: r.fehlbetrag };
+}
+
+// ---------------------------------------------------------------- Kacheln und Funktionen (0.18.0)
+
+/** Kacheln der Übersicht in der Reihenfolge von 0.17.0 (plus Hinweis-Kachel direkt unter „Frei“). */
+export const KACHELN = [
+  { id: 'konten', name: 'Aktuelle Kontostände' },
+  { id: 'frei', name: 'Frei', fest: true },
+  { id: 'luecke', name: 'Hinweis: Lücke' },
+  { id: 'empfehlung', name: 'Empfehlung für den Monat' },
+  { id: 'monate', name: 'Die nächsten Monate' },
+  { id: 'kategorien', name: 'Ausgaben nach Kategorie und Limits' },
+  { id: 'planist', name: 'Plan und Ist' },
+  { id: 'spartopf', name: 'Hinweis Spartopf' },
+];
+/** Funktionen, die sich an- und ausschalten lassen. kachel: eigene Kachel in der Übersicht, wenn eingeschaltet. */
+export const FUNKTIONEN = [
+  { id: 'vorschau', name: 'Vorschau', text: 'Zwölf Monate im Voraus, eigener Reiter', reiter: true },
+  { id: 'depot', name: 'Depot (Trade Republic)', text: 'Positionen und TR-Import, eigener Reiter', reiter: true },
+  { id: 'ausgaben', name: 'Ausgaben mit Verlauf', text: 'Kategorien, Limits und 6 Monate Verlauf' },
+  { id: 'c24', name: 'c24-Import', text: 'Kontoauszug einlesen und abgleichen' },
+  { id: 'gemeinsam', name: 'Gemeinsam', text: 'Soll und Ist aufs Gemeinschaftskonto' },
+  { id: 'offen', name: 'Offene Punkte', text: 'Aus dem Blatt „Offene Punkte“' },
+];
+export const funktionAn = (einst, id) => einst?.funktionen?.[id] !== false;
+
+/**
+ * Anordnung der Kacheln. gespeichert = [{id, an}] (oder null). Bekannte Kacheln bleiben in ihrer Reihenfolge,
+ * alles Neue kommt immer unten dazu – nie dazwischen. Unbekannte (z. B. abgeschaltete Funktion) fallen weg.
+ * „frei“ ist immer an.
+ * @param {Array|null} gespeichert
+ * @param {string[]} verfuegbar ids in Standard-Reihenfolge
+ */
+export function kachelnOrdnen(gespeichert, verfuegbar) {
+  const da = new Set(verfuegbar);
+  const liste = (Array.isArray(gespeichert) ? gespeichert : []).filter((x) => x && da.has(x.id));
+  const gesehen = new Set(liste.map((x) => x.id));
+  const out = liste.map((x) => ({ id: x.id, an: x.id === 'frei' ? true : x.an !== false }));
+  for (const id of verfuegbar) if (!gesehen.has(id)) out.push({ id, an: true });
+  return out;
+}
+/** „Wie vor dem Umbau“: Standard-Reihenfolge von 0.17.0, alles andere (neu Aktivierte) darunter. */
+export function kachelnStandard(verfuegbar) {
+  const std = KACHELN.map((x) => x.id).filter((id) => verfuegbar.includes(id));
+  return kachelnOrdnen(std.map((id) => ({ id, an: true })), verfuegbar);
+}
+/** Kachel um eine Stelle verschieben (richtung −1 = hoch, +1 = runter). Gibt eine neue Liste zurück. */
+export function kachelSchieben(liste, id, richtung) {
+  const i = liste.findIndex((x) => x.id === id); const j = i + richtung;
+  if (i < 0 || j < 0 || j >= liste.length) return liste;
+  const neu = liste.slice(); [neu[i], neu[j]] = [neu[j], neu[i]]; return neu;
+}
+
+// ---------------------------------------------------------------- Monatsabschluss (0.18.0)
+
+/** Letzter vergangener Monat, für den noch kein Abschluss in der Datei steht (oder null). */
+export function offenerAbschluss(k, heute) {
+  const vorher = monatPlus(heute.slice(0, 7), -1);
+  if ((k.abschluesse || []).some((a) => a.monat === vorher)) return null;
+  const erster = k.buchungen.map((b) => b.giltFuer).filter(Boolean).sort()[0];
+  if (erster && vorher < erster) return null;
+  return vorher;
+}
+/** Hinweise für die Checkliste des Monats m (nur zum Ansehen, abgehakt wird von Hand). */
+export function abschlussHinweise(k, m) {
+  const ende = monatPlus(m, 1) + '-01';
+  const letzte = k.buchungen.reduce((x, b) => (b.datum > x ? b.datum : x), '');
+  const namen = new Set(eigeneKonten(k).map((kt) => kt.name));
+  const ohneKat = k.buchungen.filter((b) => b.art === 'Ausgabe' && b.giltFuer === m && namen.has(b.konto) && wofuerGruppe(b, k) === 'Nicht zugeordnet').length;
+  const g = k.gemeinsam.find((x) => x.monat === m);
+  const gIst = ist(k, GK_POSTEN, m, 'Ausgabe');
+  return {
+    exportBisEnde: letzte >= ende || letzte.slice(0, 7) > m, letzteBuchung: letzte || null,
+    ohneKategorie: ohneKat,
+    gemeinsamOffen: g ? r2(Math.max(0, (g.soll || 0) - gIst)) : null,
+  };
+}
+export const ABSCHLUSS_PUNKTE = [
+  ['export', 'c24-Umsätze bis Monatsende eingespielt'],
+  ['kategorien', 'Ausgaben haben eine Kategorie (oder bleiben bewusst ohne)'],
+  ['gemeinsam', 'Überweisung aufs Gemeinschaftskonto erledigt'],
+  ['stand', 'Kontostand mit der Bank-App verglichen'],
+];

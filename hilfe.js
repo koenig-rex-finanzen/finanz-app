@@ -43,12 +43,16 @@ const NATALIE = {
 };
 
 const KAI = {
-  'Budgets': 'Geld, das du jeden Monat für etwas einplanst (z. B. Dampfen). Die Vorschau zieht es jeden Monat ab. Der Ring zeigt, wie viel schon weg ist; liegst du drüber, wird es rot und steht in der Warnung oben.',
-  'Ausgaben': 'Wofür dein Geld in einem Monat draufging, mit Budgets, Referenzwerten und Verlauf. Mit den Pfeilen wechselst du den Monat.',
-  'Verlauf': 'Die letzten 6 Monate je Gruppe. Jede Zeile hat ihren eigenen Maßstab, damit man auch kleine Beträge vergleichen kann.',
-  'Aktuelle Kontostände': 'So viel liegt laut deinen Buchungen gerade auf c24 und dem Spartopf. Mit „Mit Bank-App vergleichen“ prüfst du, ob es zur c24-App passt. Weicht es ab, zeigt die App Buchungen, die doppelt sein könnten oder fehlen.',
-  'Wofür': 'Wofür das Geld ausgegeben wurde, z. B. Freizeit oder Amazon. Das ist kein Topf und kein Posten, sondern nur zum Auswerten. Die App schlägt etwas vor, du kannst es ändern.',
-  'Wofür ausgegeben': 'Alle Ausgaben nach „Wofür“ sortiert. Ohne „Wofür“ sortiert die App nach Posten: Überweisungen aufs Gemeinschaftskonto, Trade Republic und „Feste Posten“ (z. B. Claude-Abo). Antippen zeigt die Buchungen.',
+  'Limits': 'So viel möchtest du höchstens für eine Kategorie im Monat ausgeben. Der Ring zeigt, wie viel schon weg ist. Ab 80 % und beim Erreichen gibt die App einen Hinweis. Limits warnen nur: Die Vorschau zieht sie nicht ab.',
+  'Limit im Monat €': 'Höchstbetrag für diese Kategorie in einem Monat. Leer lassen = kein Limit.',
+  'Ausgaben': 'Wofür dein Geld in einem Monat draufging, nach Kategorie, mit Limits, Referenzwerten und Verlauf. Mit den Pfeilen wechselst du den Monat.',
+  'Verlauf': 'Die letzten 6 Monate je Kategorie. Jede Zeile hat ihren eigenen Maßstab, damit man auch kleine Beträge vergleichen kann.',
+  'Aktuelle Kontostände': 'So viel liegt laut deinen Buchungen gerade auf c24 und dem Spartopf. Mit „Kontostand prüfen“ vergleichst du das mit der c24-App. Weicht es ab, zeigt die App Buchungen, die doppelt sein könnten oder fehlen. Ist ein Monat vorbei, kannst du dort auch den Monatsabschluss speichern.',
+  'Kategorie': 'Wofür das Geld ausgegeben wurde, z. B. Freizeit, Drogerie oder Amazon. Das ist kein Topf und kein Posten, sondern nur zum Auswerten und für Limits. Freiwillig: Die App schlägt etwas vor, du kannst es ändern oder leer lassen.',
+  'Bank-Kategorie': 'Die Einordnung, die die Bank im Kontoauszug mitliefert (z. B. „Lebensmittel / Supermarkt“). Kommt aus dem c24-Export und wird nicht geändert.',
+  'Ausgaben nach Kategorie': 'Alle Ausgaben nach Kategorie sortiert. Ohne Kategorie sortiert die App nach Posten: Überweisungen aufs Gemeinschaftskonto, Trade Republic und „Feste Posten“ (z. B. Claude-Abo). Oben stehen deine Limits. Antippen zeigt die Buchungen.',
+  'Hinweis: Lücke': 'In mindestens einem der nächsten Monate reicht das Geld nicht, schon ab 1 Cent. Antippen zeigt, welche Monate, wie viel fehlt, den tiefsten Punkt und welche Posten dann noch kommen. Das Badge „Lücke“ auf „Frei“ bleibt immer, auch wenn du diese Kachel ausblendest.',
+  'Tiefster Punkt': 'Der niedrigste Stand von „Frei am Monatsende“ in den Monaten, für die gewarnt wird.',
   'Art': '<b>Einnahme:</b> Geld kommt aufs Konto.<br><b>Ausgabe:</b> Geld geht vom Konto weg. Mit Topf: aus diesem Topf bezahlt.<br><b>In Topf:</b> extra Geld in einen Topf legen, zusätzlich zur Sparrate. Es bewegt sich kein Geld.<br><b>Aus Topf:</b> Geld aus einem Topf zurück ins „Frei“, ohne es auszugeben.<br><b>Umbuchung:</b> echtes Geld wandert zwischen c24 und Spartopf. Die Töpfe ändern sich nicht.',
   'Konto': 'Auf welchem deiner Konten die Buchung passiert.',
   'Von Konto': 'Von hier geht das Geld weg.',

@@ -235,6 +235,9 @@ export async function mitSitzung(ort, arbeit) {
     lies: (blatt, adresse) => graph(W + `/worksheets('${blatt}')/range(address='${adresse}')?$select=values`, { headers: S }),
     schreib: (blatt, adresse, values) => graph(W + `/worksheets('${blatt}')/range(address='${adresse}')`, json({ method: 'PATCH', headers: S, body: JSON.stringify({ values }) })),
     tabelle: (name) => graph(W + `/tables('${name}')/range?$select=address`, { headers: S }),
+    // 0.18.0: Blätter auflisten und hinten anhängen (ändert keine vorhandenen Blätter)
+    blaetter: async () => ((await graph(W + '/worksheets?$select=name,position', { headers: S }))?.value || []).map((w) => w.name),
+    blattNeu: (name) => graph(W + '/worksheets/add', json({ method: 'POST', headers: S, body: JSON.stringify({ name }) })),
   };
   try { return await arbeit(api); } finally { await graph(W + '/closeSession', { method: 'POST', headers: S }).catch(() => {}); }
 }
